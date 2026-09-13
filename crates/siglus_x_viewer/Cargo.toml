@@ -18,3 +18,10 @@ shion-render = { path = "../shion-render" }
 [[bin]]
 name = "siglus_x_viewer"
 path = "src/main.rs"
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

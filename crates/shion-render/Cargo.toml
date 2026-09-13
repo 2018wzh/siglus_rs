@@ -10,3 +10,10 @@ shion-xfile = { path = "../shion-xfile" }
 [lib]
 name = "shion_render"
 path = "src/lib.rs"
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

@@ -647,7 +647,9 @@ pub struct SkinnedPoseState {
 
 #[derive(Debug)]
 pub struct Renderer {
-    pub surface: wgpu::Surface<'static>,
+    pub surface: Option<wgpu::Surface<'static>>,
+    /// Astra hosted mode: owned color target replacing the window surface.
+    offscreen: Option<OffscreenTarget>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
@@ -702,6 +704,35 @@ pub struct Renderer {
     draw_bind_epoch: u64,
     debug_frame_serial: u64,
     emote_compositor: emote::EmoteCompositor,
+}
+
+/// Astra hosted mode color target: a renderable, copyable RGBA texture that
+/// stands in for the window surface so frames can be read back to the CPU.
+#[derive(Debug)]
+struct OffscreenTarget {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
+impl OffscreenTarget {
+    fn create(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("siglus-offscreen-color"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { texture, view }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1906,6 +1937,63 @@ impl Renderer {
         Self::new_from_instance_surface(instance, surface, width, height, scale_factor).await
     }
 
+    async fn request_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)> {
+        adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("siglus-bg-device"),
+                    required_features: wgpu::Features::empty(),
+                    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+                    required_limits: wgpu::Limits::default(),
+                },
+                None,
+            )
+            .await
+            .context("request_device")
+    }
+
+    /// Astra hosted mode: an offscreen renderer with no window surface. The
+    /// color target is an owned non-sRGB unorm texture; composed frames are
+    /// read back through `read_frame_rgba`.
+    pub async fn new_offscreen(width: u32, height: u32) -> Result<Self> {
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+        let backends = wgpu::Backends::GL;
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        let backends = wgpu::Backends::all();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends,
+            ..Default::default()
+        });
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await
+            .context("request_adapter")?;
+        let (device, queue) = Self::request_device(&adapter).await?;
+        let width = width.max(1);
+        let height = height.max(1);
+        // Non-sRGB unorm keeps D3D9 byte-space blending semantics; RGBA layout
+        // matches the family ABI frame format.
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        let offscreen = OffscreenTarget::create(&device, format, width, height);
+        Self::build(device, queue, config, 1.0, None, Some(offscreen)).await
+    }
+
     async fn new_from_instance_surface(
         instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
@@ -1922,20 +2010,7 @@ impl Renderer {
             .await
             .context("request_adapter")?;
 
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("siglus-bg-device"),
-                    required_features: wgpu::Features::empty(),
-                    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
-                    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-                    required_limits: wgpu::Limits::default(),
-                },
-                None,
-            )
-            .await
-            .context("request_device")?;
+        let (device, queue) = Self::request_device(&adapter).await?;
 
         let surface_caps = surface.get_capabilities(&adapter);
         // The original D3D9 renderer uses A8R8G8B8/X8R8G8B8 without
@@ -1954,15 +2029,6 @@ impl Renderer {
             );
         }
 
-        let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
-            scale_factor
-        } else {
-            1.0
-        };
-        let width = width.max(1);
-        let height = height.max(1);
-        let logical_width = ((width as f32) / scale_factor).max(1.0);
-        let logical_height = ((height as f32) / scale_factor).max(1.0);
         let alpha_mode = surface_caps
             .alpha_modes
             .iter()
@@ -1986,6 +2052,20 @@ impl Renderer {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+        Self::build(device, queue, config, scale_factor, Some(surface), None).await
+    }
+
+    async fn build(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        config: wgpu::SurfaceConfiguration,
+        scale_factor: f32,
+        surface: Option<wgpu::Surface<'static>>,
+        offscreen: Option<OffscreenTarget>,
+    ) -> Result<Self> {
+        let scale_factor = Self::valid_scale_factor(scale_factor);
+        let logical_width = ((config.width as f32) / scale_factor).max(1.0);
+        let logical_height = ((config.height as f32) / scale_factor).max(1.0);
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("siglus-sprite-bgl"),
@@ -2289,6 +2369,7 @@ impl Renderer {
         let emote_compositor = emote::EmoteCompositor::new(&device);
         Ok(Self {
             surface,
+            offscreen,
             device,
             queue,
             config,
@@ -2419,7 +2500,16 @@ impl Renderer {
         self.config.width = width;
         self.config.height = height;
         // Keep explicit reconfiguration for surface-loss recovery at the same size.
-        self.surface.configure(&self.device, &self.config);
+        if let Some(surface) = self.surface.as_ref() {
+            surface.configure(&self.device, &self.config);
+        } else if surface_changed {
+            self.offscreen = Some(OffscreenTarget::create(
+                &self.device,
+                self.config.format,
+                self.config.width,
+                self.config.height,
+            ));
+        }
         if surface_changed {
             self.surface_depth = create_depth_texture(&self.device, width, height);
         }
@@ -2472,13 +2562,52 @@ impl Renderer {
     }
 
     pub fn render_frame(&mut self, images: &ImageManager, frame_plan: &RenderFrame) -> Result<()> {
-        let frame = self
+        if self.offscreen.is_some() {
+            let target = self.offscreen.take();
+            let result = match target.as_ref() {
+                Some(target) => self.render_frame_to_view(images, frame_plan, &target.view),
+                None => Ok(()),
+            };
+            self.offscreen = target;
+            return result;
+        }
+        let surface = self
             .surface
+            .as_ref()
+            .context("renderer has neither a surface nor an offscreen target")?;
+        let frame = surface
             .get_current_texture()
             .context("get_current_texture")?;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        self.render_frame_to_view(images, frame_plan, &view)?;
+        frame.present();
+        Ok(())
+    }
+
+    /// Astra hosted mode: copies the composed color target back to CPU RGBA
+    /// bytes. Requires the offscreen renderer.
+    pub fn read_frame_rgba(&self) -> Result<(u32, u32, Vec<u8>)> {
+        let target = self
+            .offscreen
+            .as_ref()
+            .context("no offscreen frame target")?;
+        let rgba = self.debug_read_texture_rgba(
+            &target.texture,
+            self.config.width,
+            self.config.height,
+            self.config.format,
+        )?;
+        Ok((self.config.width, self.config.height, rgba))
+    }
+
+    fn render_frame_to_view(
+        &mut self,
+        images: &ImageManager,
+        frame_plan: &RenderFrame,
+        view: &wgpu::TextureView,
+    ) -> Result<()> {
         self.debug_frame_serial = self.debug_frame_serial.wrapping_add(1);
         {
             let mut live_emote_ids = HashSet::new();
@@ -2523,16 +2652,15 @@ impl Renderer {
                 });
             self.render_copy_pass(
                 &mut encoder,
-                ColorTarget::External(&view),
+                ColorTarget::External(view),
                 final_target,
                 blit_range,
             )?;
             self.submit(encoder);
         } else {
-            self.render_ordinary_frame_to_surface(images, &frame_plan.sprites, &view)?;
+            self.render_ordinary_frame_to_surface(images, &frame_plan.sprites, view)?;
         }
 
-        frame.present();
         Ok(())
     }
 

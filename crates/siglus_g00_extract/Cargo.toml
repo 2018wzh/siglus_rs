@@ -9,3 +9,10 @@ anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 image.workspace = true
 siglus_scene_vm = { path = "../siglus_scene_vm" }
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Astra hosted additions: offscreen renderer and PCM tap audio backend.
+astra-hosted = []
+
 [lib]
 crate-type = ["rlib", "cdylib", "staticlib"]
 
@@ -64,3 +68,9 @@ web-time = "1.1"
 console_error_panic_hook = "0.1"
 getrandom_02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
 getrandom_03 = { package = "getrandom", version = "0.3.4", features = ["wasm_js"] }
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

@@ -10,3 +10,10 @@ anyhow.workspace = true
 clap.workspace = true
 encoding_rs = "0.8"
 siglus_compiler_common = { path = "../siglus_compiler_common" }
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

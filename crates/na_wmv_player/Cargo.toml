@@ -1,6 +1,6 @@
 [package]
 name = "wmv-decoder"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 
 [lib]
@@ -67,3 +67,10 @@ required-features = ["desktop-bins"]
 name = "wmv3-frame-dump"
 path = "src/bin/wmv3_frame_dump.rs"
 required-features = ["desktop-bins"]
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

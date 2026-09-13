@@ -8,3 +8,10 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

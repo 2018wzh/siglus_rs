@@ -12,3 +12,10 @@ png = "0.18.1"
 
 [lib]
 name = "theora_rs"
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

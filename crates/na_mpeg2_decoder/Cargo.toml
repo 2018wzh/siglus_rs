@@ -47,3 +47,10 @@ name = "mpeg2_player_wgpu"
 path = "src/bin/mpeg2_player_wgpu.rs"
 required-features = ["desktop-bins"]
 
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

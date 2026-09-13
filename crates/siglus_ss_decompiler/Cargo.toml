@@ -7,3 +7,10 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 siglus_assets = { path = "../siglus_assets" }
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

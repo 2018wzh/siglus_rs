@@ -5,3 +5,10 @@ edition = "2021"
 license = "MPL-2.0"
 
 [dependencies]
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

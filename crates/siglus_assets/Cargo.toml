@@ -11,3 +11,10 @@ hex = "0.4"
 image.workspace = true
 lewton = { version = "0.10", default-features = true }
 na_mpeg2_decoder = { path = "../na_mpeg2_decoder" }
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

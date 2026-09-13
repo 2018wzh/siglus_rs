@@ -10,3 +10,10 @@ path = "src/lib.rs"
 
 [dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+# Vendored third-party source: silence upstream warnings for host builds.
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

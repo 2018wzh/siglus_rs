@@ -6,7 +6,7 @@
 //!
 //! Cross-platform blocking and wait model.
 
-use crate::platform_time::{Duration, Instant};
+use crate::platform_time::{wait_now_ms, Duration};
 
 use crate::audio::{BgmEngine, KoeEngine, PcmEngine, SeEngine};
 
@@ -756,7 +756,9 @@ fn finish_event_wait_by_key(w: &EventWait, globals: &mut GlobalState, ids: &Runt
 
 #[derive(Debug, Default, Clone)]
 pub struct VmWait {
-    pub until: Option<Instant>,
+    /// Wall-clock deadline in monotonic milliseconds; the hosted virtual
+    /// clock replaces the source while a headless session drives time.
+    pub until: Option<u64>,
     pub until_frame: Option<u64>,
     /// True only when `until` represents MWND OPEN/CLOSE animation wait.
     mwnd_animation_wait: bool,
@@ -891,7 +893,7 @@ impl VmWait {
     ) -> bool {
         // Auto-clear time waits when the deadline is reached.
         if let Some(t) = self.until {
-            if Instant::now() >= t {
+            if wait_now_ms() >= t {
                 let key_skippable_timewait = self.skip_time_on_key;
                 self.until = None;
                 self.skip_time_on_key = false;
@@ -1261,7 +1263,7 @@ impl VmWait {
             return;
         }
         self.mark_block_request();
-        self.until = Some(Instant::now() + Duration::from_millis(ms));
+        self.until = Some(wait_now_ms().saturating_add(ms));
         self.skip_time_on_key = false;
         self.mwnd_animation_wait = false;
     }
@@ -1271,7 +1273,7 @@ impl VmWait {
             return;
         }
         self.mark_block_request();
-        self.until = Some(Instant::now() + Duration::from_millis(ms));
+        self.until = Some(wait_now_ms().saturating_add(ms));
         self.skip_time_on_key = false;
         self.mwnd_animation_wait = true;
     }
@@ -1293,7 +1295,7 @@ impl VmWait {
             return;
         }
         self.mark_block_request();
-        self.until = Some(Instant::now() + Duration::from_millis(ms));
+        self.until = Some(wait_now_ms().saturating_add(ms));
         self.skip_time_on_key = true;
         self.mwnd_animation_wait = false;
         anim_skip_trace(format!("wait_ms_key start ms={} block_generation={}", ms, self.block_generation));
