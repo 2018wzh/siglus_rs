@@ -39,6 +39,11 @@ pub struct SiglusHostConfig {
     pub scene_id: Option<usize>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Astra hosted mode: `step` drives the frame clock from its `dt_ms`
+    /// argument instead of the wall clock, so headless sessions advance one
+    /// deterministic frame per call.
+    #[cfg(feature = "astra-hosted")]
+    pub deterministic_frame_clock: bool,
 }
 
 impl SiglusHostConfig {
@@ -49,6 +54,8 @@ impl SiglusHostConfig {
             scene_id: None,
             width: None,
             height: None,
+            #[cfg(feature = "astra-hosted")]
+            deterministic_frame_clock: false,
         }
     }
 }
@@ -352,6 +359,13 @@ impl SiglusHost {
 
     /// Step one frame and present when needed. Returns true if the engine requested exit.
     pub fn step(&mut self, dt_ms: u32) -> Result<bool> {
+        #[cfg(feature = "astra-hosted")]
+        if self.config.deterministic_frame_clock {
+            self.vm
+                .ctx
+                .set_frame_clock_override_ms(dt_ms.min(i32::MAX as u32) as i32);
+        }
+        #[cfg(not(feature = "astra-hosted"))]
         let _ = dt_ms;
         self.last_step = Some(Instant::now());
         if self.native_messagebox_pending() {
@@ -442,6 +456,12 @@ impl SiglusHost {
 
     pub fn renderer_mut(&mut self) -> RefMut<'_, Renderer> {
         self.renderer.borrow_mut()
+    }
+
+    /// Astra hosted mode: read-only renderer access for frame readback from
+    /// an immutable session view.
+    pub fn renderer(&self) -> std::cell::Ref<'_, Renderer> {
+        self.renderer.borrow()
     }
 
     pub fn vm_mut(&mut self) -> &mut SceneVm<'static> {

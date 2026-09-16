@@ -1448,7 +1448,11 @@ impl App {
                 .update_texture(&renderer.device, &renderer.queue, *id, delta);
         }
 
-        let frame = match renderer.surface.get_current_texture() {
+        let surface = renderer
+            .surface
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("renderer has no window surface"))?;
+        let frame = match surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 renderer.resize(renderer.config.width, renderer.config.height);

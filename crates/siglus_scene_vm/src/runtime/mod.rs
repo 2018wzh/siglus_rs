@@ -512,6 +512,10 @@ pub struct CommandContext {
     pending_sel_point_result: Option<i32>,
 
     frame_clock_last: Option<crate::platform_time::Instant>,
+    /// Astra hosted mode: when set, the next `tick_frame` uses this elapsed
+    /// value instead of the wall clock, and the override is consumed.
+    #[cfg(feature = "astra-hosted")]
+    frame_clock_override_ms: Option<i32>,
     last_button_hover_sound_pos: Option<(i32, i32)>,
     suppress_next_right_syscom_open: bool,
 }
@@ -1448,6 +1452,8 @@ impl CommandContext {
             pending_auto_savepoint: false,
             pending_sel_point_result: None,
             frame_clock_last: None,
+            #[cfg(feature = "astra-hosted")]
+            frame_clock_override_ms: None,
             last_button_hover_sound_pos: None,
             suppress_next_right_syscom_open: false,
         };
@@ -4442,12 +4448,31 @@ impl CommandContext {
         self.sync_editbox_runtime();
     }
 
+    /// Astra hosted mode: drives the next frame with an explicit elapsed
+    /// value so headless sessions advance deterministically instead of in
+    /// real time.
+    #[cfg(feature = "astra-hosted")]
+    pub fn set_frame_clock_override_ms(&mut self, elapsed_ms: i32) {
+        self.frame_clock_override_ms = Some(elapsed_ms);
+    }
+
     pub fn tick_frame(&mut self) {
         let now = crate::platform_time::Instant::now();
         let last = self.frame_clock_last.replace(now);
-        let elapsed_ms = last
+        let wall_elapsed_ms = last
             .map(|t| now.saturating_duration_since(t).as_millis() as i32)
             .unwrap_or(16);
+        #[cfg(feature = "astra-hosted")]
+        let elapsed_ms = match self.frame_clock_override_ms.take() {
+            Some(ms) => ms,
+            None => wall_elapsed_ms,
+        };
+        #[cfg(feature = "astra-hosted")]
+        if elapsed_ms > 0 {
+            crate::platform_time::hosted_clock::advance_ms(elapsed_ms.max(0) as u64);
+        }
+        #[cfg(not(feature = "astra-hosted"))]
+        let elapsed_ms = wall_elapsed_ms;
         let real_delta_ms = elapsed_ms.max(0);
         // eng_frame.cpp advances game-time and wipe-time at 32x while the
         // engine is in Ctrl/read/script-trigger skip. Real-time audio/fades do

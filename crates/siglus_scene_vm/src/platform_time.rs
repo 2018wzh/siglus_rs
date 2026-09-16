@@ -92,3 +92,58 @@ pub fn local_log_timestamp() -> String {
     )
 }
 
+
+/// Milliseconds on a process-lifetime monotonic clock. This is the real-time
+/// source for blocking waits; the hosted virtual clock replaces it wholesale
+/// so a headless session can advance deterministically.
+pub fn monotonic_now_ms() -> u64 {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let epoch = EPOCH.get_or_init(Instant::now);
+    epoch.elapsed().as_millis() as u64
+}
+
+/// Astra hosted mode: a virtual monotonic clock. While enabled, every real
+/// wait deadline is measured against the virtual time, which the session
+/// advances by one frame's elapsed value per step.
+#[cfg(feature = "astra-hosted")]
+pub mod hosted_clock {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    static VIRTUAL: AtomicBool = AtomicBool::new(false);
+    static VIRTUAL_NOW_MS: AtomicU64 = AtomicU64::new(0);
+
+    pub fn enable() {
+        VIRTUAL_NOW_MS.store(super::monotonic_now_ms(), Ordering::Release);
+        VIRTUAL.store(true, Ordering::Release);
+    }
+
+    pub fn disable() {
+        VIRTUAL.store(false, Ordering::Release);
+    }
+
+    pub fn enabled() -> bool {
+        VIRTUAL.load(Ordering::Acquire)
+    }
+
+    pub fn now_ms() -> u64 {
+        VIRTUAL_NOW_MS.load(Ordering::Acquire)
+    }
+
+    /// Advances the virtual clock. No-op while the virtual clock is off.
+    pub fn advance_ms(ms: u64) {
+        if VIRTUAL.load(Ordering::Relaxed) {
+            VIRTUAL_NOW_MS.fetch_add(ms, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The monotonic time source blocking waits must observe: the virtual clock
+/// while the hosted session drives it, the real process clock otherwise.
+#[cfg(feature = "astra-hosted")]
+pub fn wait_now_ms() -> u64 {
+    if hosted_clock::enabled() {
+        hosted_clock::now_ms()
+    } else {
+        monotonic_now_ms()
+    }
+}
