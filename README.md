@@ -8,6 +8,24 @@ This project is non-commercial and intended for research purposes.
 
 <br clear="left"/>
 
+## Native runtime lifetime
+
+The optional `siglus_scene_vm/pausable-clock` feature provides
+`SiglusHost::set_suspended`: native monotonic time and the original Kira mixer
+pause together, without replay-clock ticks or accumulated background time.
+Window/output sizes remain separate from the native logical stage.
+
+The pinned `vendor/kira` submodule retains Kira 0.9.6 decoding and mixing.
+Its CPAL owner reports startup failures and joins its device worker; explicit
+`DecoderOwner` instances join streaming decoders after the device stops.
+Playback-handle drop still permits playback. Movie and pending voice workers
+retain their native decoding paths and are joined by their owning resources;
+bounded movie receivers disconnect before joining a blocked producer.
+
+`AudioHub::shutdown`, `KoeEngine::shutdown`, and `MovieManager::shutdown` expose
+explicit error-reporting cleanup. Resource Drop performs the remaining joins.
+Call these APIs from the runtime owner thread, never an audio callback.
+
 ## Example screenshots
 
 ### UK2 Engine

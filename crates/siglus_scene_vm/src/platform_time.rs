@@ -9,11 +9,12 @@ pub use std::time::Duration;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use web_time::Instant;
 
-#[cfg(all(
-    not(all(target_arch = "wasm32", target_os = "unknown")),
-    not(feature = "virtual-clock")
-))]
+#[cfg(all(not(all(target_arch = "wasm32", target_os = "unknown")), not(feature = "virtual-clock"), not(feature = "pausable-clock")))]
 pub use std::time::Instant;
+#[cfg(all(not(all(target_arch = "wasm32", target_os = "unknown")), not(feature = "virtual-clock"), feature = "pausable-clock"))]
+mod pausable;
+#[cfg(all(not(all(target_arch = "wasm32", target_os = "unknown")), not(feature = "virtual-clock"), feature = "pausable-clock"))]
+pub use pausable::{Instant, set_paused};
 
 #[cfg(feature = "virtual-clock")]
 pub use virtual_clock::{Instant, advance_virtual_clock};

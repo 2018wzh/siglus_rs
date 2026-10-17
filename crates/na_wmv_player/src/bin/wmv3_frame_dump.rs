@@ -30,9 +30,9 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 
-use wmv_decoder::asf::{AsfFile, VideoStreamInfo};
-use wmv_decoder::vc1::{PictureHeader, SequenceHeader};
-use wmv_decoder::{DecoderError, Result, Wmv3Decoder, YuvFrame};
+use siglus_wmv_decoder::asf::{AsfFile, VideoStreamInfo};
+use siglus_wmv_decoder::vc1::{PictureHeader, SequenceHeader};
+use siglus_wmv_decoder::{DecoderError, Result, Wmv3Decoder, YuvFrame};
 
 const DEFAULT_CONTEXT: usize = 2;
 const DEFAULT_THRESHOLD: u8 = 16;

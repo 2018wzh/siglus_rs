@@ -12,6 +12,10 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 # (`platform_time::advance_virtual_clock`), for deterministic replays of the
 # VM (examples/vm_replay.rs). Never enable it in a player.
 virtual-clock = []
+default = ["native-audio"]
+native-audio = ["kira/cpal"]
+# Optional native host suspension; excludes paused wall time without replay ticks.
+pausable-clock = ["native-audio"]
 
 [dependencies]
 rustc-hash = "2"
@@ -46,7 +50,7 @@ path = "src/bin/mesh_asset_tool.rs"
 serde_json = "1"
 
 [target.'cfg(not(any(target_os = "horizon", target_os = "vita")))'.dependencies]
-kira.workspace = true
+kira = { version = "=0.9.6", path = "../../vendor/kira/crates/kira", default-features = false, features = ["mp3", "ogg", "flac", "wav"] }
 wgpu.workspace = true
 winit.workspace = true
 pollster.workspace = true
@@ -59,10 +63,10 @@ ureq = "2.10"
 
 [target.'cfg(target_os = "horizon")'.dependencies]
 getrandom_03 = { package = "getrandom", version = "0.3.4" }
-kira = { version = "0.9", default-features = false, features = ["mp3", "ogg", "flac", "wav"] }
+kira = { version = "=0.9.6", path = "../../vendor/kira/crates/kira", default-features = false, features = ["mp3", "ogg", "flac", "wav"] }
 
 [target.'cfg(target_os = "vita")'.dependencies]
-kira = { version = "0.9", default-features = false, features = ["mp3", "ogg", "flac", "wav"] }
+kira = { version = "=0.9.6", path = "../../vendor/kira/crates/kira", default-features = false, features = ["mp3", "ogg", "flac", "wav"] }
 vitasdk-sys = { version = "=0.3.3", default-features = false, features = ["SceGxm_stub", "SceSysmem_stub"] }
 
 [target.'cfg(target_os = "android")'.dependencies]

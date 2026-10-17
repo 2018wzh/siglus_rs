@@ -31,8 +31,8 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 
-use wmv_decoder::asf::AsfFile;
-use wmv_decoder::{AsfWmaDecoder, AsfWmv2Decoder, DecoderError, Result, YuvFrame};
+use siglus_wmv_decoder::asf::AsfFile;
+use siglus_wmv_decoder::{AsfWmaDecoder, AsfWmv2Decoder, DecoderError, Result, YuvFrame};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DecodeMode {

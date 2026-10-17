@@ -1187,7 +1187,7 @@ fn load_koe_mouth_volume_table(
 type PendingKoeDecode = (
     (i64, u16),
     String,
-    std::sync::mpsc::Receiver<Result<Vec<u8>, String>>,
+    crate::worker::JoinedReceiver<Result<Vec<u8>, String>>,
 );
 
 pub struct KoeEngine {
@@ -1200,6 +1200,7 @@ pub struct KoeEngine {
     /// Asynchronous decode in flight: the voice is decoded on a worker thread
     /// so a 300ms Vorbis decode never freezes the frame loop.
     pending_decode: Option<PendingKoeDecode>,
+    retired_decodes: Vec<crate::worker::JoinedReceiver<Result<Vec<u8>, String>>>,
     /// Decoded/JITAN-converted voice cache keyed by (koe_no, jitan_rate).
     /// The original re-runs JITAN when the configured rate changes.
     decode_cache: HashMap<(i64, u16), std::sync::Arc<Vec<u8>>>,
@@ -1220,6 +1221,7 @@ impl KoeEngine {
             current_koe_no: -1,
             mouth_volume_table: Vec::new(),
             pending_decode: None,
+            retired_decodes: Vec::new(),
             decode_cache: HashMap::new(),
         }
     }
@@ -1266,13 +1268,13 @@ impl KoeEngine {
         let project_dir = self.inner.project_dir.clone();
         let append_dir = current_append_dir.to_string();
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             let result = decode_koe_no_for_project(&project_dir, koe_no)
                 .and_then(|wav| crate::audio::jitan::convert_koe_wav(wav, jitan_rate))
                 .map_err(|err| format!("{err:#}"));
             let _ = tx.send(result);
         });
-        self.pending_decode = Some((cache_key, append_dir, rx));
+        self.pending_decode = Some((cache_key, append_dir, crate::worker::JoinedReceiver::new(rx, worker)));
         Ok(())
     }
 
@@ -1299,6 +1301,7 @@ impl KoeEngine {
     }
 
     pub fn tick(&mut self, audio: &mut AudioHub) {
+        self.retired_decodes.retain(|task| !task.is_finished());
         let Some((cache_key, append_dir, rx)) = self.pending_decode.take() else {
             return;
         };
@@ -1334,8 +1337,23 @@ impl KoeEngine {
     }
 
     pub fn stop(&mut self, fade_time_ms: Option<i64>) -> Result<()> {
-        self.pending_decode = None;
+        if let Some((_, _, mut task)) = self.pending_decode.take() {
+            task.disconnect();
+            self.retired_decodes.push(task);
+        }
+        self.retired_decodes.retain(|task| !task.is_finished());
         self.inner.stop_slot(0, fade_time_ms)
+    }
+
+    /// Reclaim pending and superseded voice decoders on the native owner thread.
+    pub fn shutdown(&mut self) -> Result<()> {
+        let mut failed = false;
+        if let Some((_, _, mut task)) = self.pending_decode.take() { failed |= task.shutdown().is_err(); }
+        for task in &mut self.retired_decodes { failed |= task.shutdown().is_err(); }
+        self.retired_decodes.clear();
+        let stopped = self.inner.stop_slot(0, None);
+        if failed { bail!("ASTRA_SIGLUS_KOE_WORKER_PANIC"); }
+        stopped
     }
 
     pub fn is_playing_any(&mut self) -> bool {

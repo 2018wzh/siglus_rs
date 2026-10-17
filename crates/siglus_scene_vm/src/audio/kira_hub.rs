@@ -1,4 +1,6 @@
 use std::fmt;
+#[cfg(feature = "pausable-clock")]
+use std::sync::{Arc, atomic::AtomicBool};
 
 #[cfg(any(target_os = "horizon", target_os = "vita"))]
 use super::switch_backend::SwitchBackend as PlatformBackend;
@@ -9,9 +11,35 @@ use kira::manager::backend::DefaultBackend as PlatformBackend;
 use kira::manager::{AudioManager, AudioManagerSettings};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 #[cfg(not(target_arch = "wasm32"))]
-use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
+use kira::sound::streaming::{DecoderOwner, StreamingSoundData, StreamingSoundHandle};
 use kira::track::{TrackBuilder, TrackHandle};
 use kira::tween::Tween;
+
+impl AudioHub {
+    fn default_volumes() -> Self {
+        Self {
+            manager: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            decoders: DecoderOwner::new(),
+            initialization_error: None,
+            bgm: None,
+            se: None,
+            pcm: None,
+            koe: None,
+            mov: None,
+            bgm_base: 255,
+            se_base: 255,
+            pcm_base: 255,
+            koe_base: 255,
+            mov_base: 255,
+            bgm_master: 255,
+            se_master: 255,
+            pcm_master: 255,
+            koe_master: 255,
+            mov_master: 255,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackKind {
@@ -22,12 +50,17 @@ pub enum TrackKind {
     Mov,
 }
 
+
 /// Shared Kira backend.
 ///
 /// Kira 0.9 uses `AudioManager::play` plus `StaticSoundData::output_destination(&track)`.
 /// We keep one sub-track per Siglus category (BGM/SE/PCM).
 pub struct AudioHub {
     manager: Option<AudioManager<PlatformBackend>>,
+    // Field order is intentional: device/mixer stops before decoder joins.
+    #[cfg(not(target_arch = "wasm32"))]
+    decoders: DecoderOwner,
+    initialization_error: Option<&'static str>,
     bgm: Option<TrackHandle>,
     se: Option<TrackHandle>,
     pcm: Option<TrackHandle>,
@@ -60,15 +93,27 @@ impl Default for AudioHub {
 }
 
 impl AudioHub {
+    #[cfg(feature = "pausable-clock")]
+    pub fn set_suspended(&mut self, suspended: bool) {
+        if let Some(manager) = self.manager.as_mut() {
+            manager.backend_mut().set_suspended(suspended);
+        }
+    }
+    #[cfg(feature = "pausable-clock")]
+    pub fn suspension_state(&mut self) -> Result<Arc<AtomicBool>> {
+        let manager = self.manager.as_mut().ok_or_else(|| anyhow!("audio disabled"))?;
+        Ok(manager.backend_mut().suspension_state())
+    }
+
     pub fn new() -> Self {
-        // Replays on the virtual clock run silent: waits on a playing sound
-        // would otherwise end by the device's real playback time.
+        #[cfg(feature = "native-audio")]
         let manager = if cfg!(feature = "virtual-clock") {
             Err(anyhow!("virtual clock: audio off"))
         } else {
             AudioManager::<PlatformBackend>::new(AudioManagerSettings::default())
-                .map_err(|e| anyhow!("{e}"))
+                .map_err(|error| anyhow!("{error}"))
         };
+        #[cfg(feature = "native-audio")]
         match manager {
             Ok(mut manager) => {
                 let bgm = manager.add_sub_track(TrackBuilder::default()).ok();
@@ -83,44 +128,55 @@ impl AudioHub {
                     pcm,
                     koe,
                     mov,
-                    bgm_base: 255,
-                    se_base: 255,
-                    pcm_base: 255,
-                    koe_base: 255,
-                    mov_base: 255,
-                    bgm_master: 255,
-                    se_master: 255,
-                    pcm_master: 255,
-                    koe_master: 255,
-                    mov_master: 255,
+                    ..Self::default_volumes()
                 }
             }
             Err(e) => {
                 eprintln!("kira init failed, audio disabled: {:#}", e);
-                Self {
-                    manager: None,
-                    bgm: None,
-                    se: None,
-                    pcm: None,
-                    koe: None,
-                    mov: None,
-                    bgm_base: 255,
-                    se_base: 255,
-                    pcm_base: 255,
-                    koe_base: 255,
-                    mov_base: 255,
-                    bgm_master: 255,
-                    se_master: 255,
-                    pcm_master: 255,
-                    koe_master: 255,
-                    mov_master: 255,
-                }
+                Self::disabled("ASTRA_SIGLUS_NATIVE_AUDIO_INIT")
             }
+        }
+        #[cfg(not(feature = "native-audio"))]
+        Self::disabled("ASTRA_SIGLUS_AUDIO_BACKEND_REQUIRED")
+    }
+
+
+    fn disabled(code: &'static str) -> Self {
+        Self {
+            manager: None,
+            initialization_error: Some(code),
+            bgm: None,
+            se: None,
+            pcm: None,
+            koe: None,
+            mov: None,
+            ..Self::default_volumes()
         }
     }
 
     pub fn is_enabled(&self) -> bool {
         self.manager.is_some()
+    }
+
+    pub fn check_initialization(&mut self) -> Result<()> {
+        if let Some(code) = self.initialization_error { return Err(anyhow!(code)); }
+        #[cfg(feature = "pausable-clock")]
+        if let Some(manager) = self.manager.as_mut() { manager.backend_mut().check()?; }
+        Ok(())
+    }
+
+    /// Stop the native device first, then cancel and join all decoder workers.
+    pub fn shutdown(&mut self) -> Result<()> {
+        #[cfg(feature = "pausable-clock")]
+        let device = self.manager.as_mut().map_or(Ok(()), |manager| manager.backend_mut().shutdown().map_err(anyhow::Error::from));
+        #[cfg(not(feature = "pausable-clock"))]
+        let device: Result<()> = Ok(());
+        drop(self.manager.take());
+        #[cfg(not(target_arch = "wasm32"))]
+        let decoders = self.decoders.stop_and_join().map_err(|_| anyhow!("ASTRA_SIGLUS_AUDIO_DECODER_PANIC"));
+        #[cfg(target_arch = "wasm32")]
+        let decoders: Result<()> = Ok(());
+        device.and(decoders)
     }
 
     fn track_ref(&self, kind: TrackKind) -> Option<&TrackHandle> {
@@ -247,7 +303,7 @@ impl AudioHub {
             .as_mut()
             .ok_or_else(|| anyhow!("audio disabled"))?;
         manager
-            .play(data)
+            .play(data.with_decoder_owner(&mut self.decoders))
             .map_err(|_| anyhow!("kira: play streaming sound failed"))
     }
 

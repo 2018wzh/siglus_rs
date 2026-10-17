@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{
     Arc,
-    mpsc::{self, Receiver, TryRecvError},
+    mpsc::{self, TryRecvError},
 };
 use std::thread;
+use crate::worker::JoinedReceiver;
 
 use anyhow::{Context, Result, anyhow, bail};
 #[cfg(not(target_arch = "wasm32"))]
@@ -200,7 +201,7 @@ struct Mpeg2DecodedFrame {
 }
 
 struct Mpeg2StreamState {
-    rx: Receiver<Result<Mpeg2StreamEvent, String>>,
+    rx: JoinedReceiver<Result<Mpeg2StreamEvent, String>>,
     frames: VecDeque<Mpeg2DecodedFrame>,
     width: Option<u32>,
     height: Option<u32>,
@@ -225,7 +226,7 @@ impl Drop for Mpeg2StreamState {
 }
 
 struct Mpeg2AudioTask {
-    rx: Receiver<Result<Option<MovieAudio>, String>>,
+    rx: JoinedReceiver<Result<Option<MovieAudio>, String>>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -260,7 +261,7 @@ struct WmvDecodedFrame {
 }
 
 struct WmvStreamState {
-    rx: Receiver<Result<WmvStreamEvent, String>>,
+    rx: JoinedReceiver<Result<WmvStreamEvent, String>>,
     frames: VecDeque<WmvDecodedFrame>,
     width: Option<u32>,
     height: Option<u32>,
@@ -287,7 +288,7 @@ impl Drop for WmvStreamState {
 }
 
 struct WmvAudioTask {
-    rx: Receiver<Result<Option<MovieAudio>, String>>,
+    rx: JoinedReceiver<Result<Option<MovieAudio>, String>>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -318,7 +319,7 @@ enum OmvStreamEvent {
 }
 
 struct OmvStreamState {
-    rx: Receiver<Result<OmvStreamEvent, String>>,
+    rx: JoinedReceiver<Result<OmvStreamEvent, String>>,
     frames: VecDeque<(usize, Arc<RgbaImage>)>,
     loop_head_frames: VecDeque<(usize, Arc<RgbaImage>)>,
     loop_head_bytes: usize,
@@ -368,7 +369,7 @@ pub struct MovieManager {
     current: Option<MovieInfo>,
     cache: HashMap<PathBuf, MovieAsset>,
     preview_cache: HashMap<PathBuf, Arc<RgbaImage>>,
-    decode_tasks: HashMap<PathBuf, Receiver<Result<MovieAsset, String>>>,
+    decode_tasks: HashMap<PathBuf, JoinedReceiver<Result<MovieAsset, String>>>,
     mpeg2_audio_cache: HashMap<PathBuf, Option<MovieAudio>>,
     mpeg2_audio_tasks: HashMap<PathBuf, Mpeg2AudioTask>,
     mpeg2_streams: HashMap<PathBuf, Mpeg2StreamState>,
@@ -382,6 +383,12 @@ pub struct MovieManager {
     /// movie poll re-resolves the path on every frame, and on Android this
     /// translates into slow FUSE directory scans.
     path_cache: HashMap<(String, String), PathBuf>,
+}
+
+impl Drop for MovieManager {
+    fn drop(&mut self) {
+        if let Err(error) = self.shutdown() { log::error!("{error:#}"); }
+    }
 }
 
 impl std::fmt::Debug for MovieManager {
@@ -417,6 +424,30 @@ pub struct MovieMemoryStats {
 }
 
 impl MovieManager {
+    /// Cancel every native media producer, then disconnect and join all workers.
+    pub fn shutdown(&mut self) -> Result<()> {
+        for state in self.mpeg2_streams.values() { state.request_frames.store(usize::MAX, Ordering::Release); }
+        for state in self.wmv_streams.values() { state.request_ms.store(usize::MAX, Ordering::Release); }
+        for state in self.omv_streams.values() { state.request_frame.store(usize::MAX, Ordering::Release); }
+        for task in self.mpeg2_audio_tasks.values() { task.cancel.store(true, Ordering::Release); }
+        for task in self.wmv_audio_tasks.values() { task.cancel.store(true, Ordering::Release); }
+        let mut failed = false;
+        for task in self.decode_tasks.values_mut() { failed |= task.shutdown().is_err(); }
+        for task in self.mpeg2_audio_tasks.values_mut() { failed |= task.rx.shutdown().is_err(); }
+        for task in self.wmv_audio_tasks.values_mut() { failed |= task.rx.shutdown().is_err(); }
+        for state in self.mpeg2_streams.values_mut() { failed |= state.rx.shutdown().is_err(); }
+        for state in self.wmv_streams.values_mut() { failed |= state.rx.shutdown().is_err(); }
+        for state in self.omv_streams.values_mut() { failed |= state.rx.shutdown().is_err(); }
+        self.decode_tasks.clear();
+        self.mpeg2_audio_tasks.clear();
+        self.wmv_audio_tasks.clear();
+        self.mpeg2_streams.clear();
+        self.wmv_streams.clear();
+        self.omv_streams.clear();
+        if failed { bail!("ASTRA_SIGLUS_MOVIE_WORKER_PANIC"); }
+        Ok(())
+    }
+
     /// Release decoders whose OBJECT movies are no longer visited by the
     /// scene. Active streams update their timestamp on every presentation
     /// poll, so several simultaneous movies remain resident.
@@ -758,13 +789,13 @@ impl MovieManager {
             {
                 let (tx, rx) = mpsc::channel();
                 let worker_path = path.clone();
-                thread::spawn(move || {
+                let worker = thread::spawn(move || {
                     lower_worker_thread_priority();
                     let result =
                         decode_asset_for_path(&worker_path).map_err(|e| format!("{:#}", e));
                     let _ = tx.send(result);
                 });
-                self.decode_tasks.insert(path.clone(), rx);
+                self.decode_tasks.insert(path.clone(), JoinedReceiver::new(rx, worker));
             }
         }
 
@@ -1005,14 +1036,14 @@ impl MovieManager {
             let cancel = Arc::new(AtomicBool::new(false));
             let worker_cancel = cancel.clone();
             let worker_path = path.to_path_buf();
-            thread::spawn(move || {
+            let worker = thread::spawn(move || {
                 lower_worker_thread_priority();
                 let result = decode_mpeg2_audio_for_path(&worker_path, worker_cancel.as_ref())
                     .map_err(|err| format!("{:#}", err));
                 let _ = tx.send(result);
             });
             self.mpeg2_audio_tasks
-                .insert(path.to_path_buf(), Mpeg2AudioTask { rx, cancel });
+                .insert(path.to_path_buf(), Mpeg2AudioTask { rx: JoinedReceiver::new(rx, worker), cancel });
             return (None, false);
         }
 
@@ -1196,14 +1227,14 @@ impl MovieManager {
             let cancel = Arc::new(AtomicBool::new(false));
             let worker_cancel = cancel.clone();
             let worker_path = path.to_path_buf();
-            thread::spawn(move || {
+            let worker = thread::spawn(move || {
                 lower_worker_thread_priority();
                 let result = decode_wmv_audio_for_path(&worker_path, worker_cancel.as_ref())
                     .map_err(|err| format!("{:#}", err));
                 let _ = tx.send(result);
             });
             self.wmv_audio_tasks
-                .insert(path.to_path_buf(), WmvAudioTask { rx, cancel });
+                .insert(path.to_path_buf(), WmvAudioTask { rx: JoinedReceiver::new(rx, worker), cancel });
             return (None, false);
         }
 
@@ -1663,7 +1694,7 @@ fn spawn_mpeg2_stream_state(
     ));
     let worker_request_frames = request_frames.clone();
     let video_path = path.clone();
-    thread::spawn(move || {
+    let worker = thread::spawn(move || {
         lower_worker_thread_priority();
         let result = stream_mpeg2_video_worker(
             video_path.as_path(),
@@ -1679,7 +1710,7 @@ fn spawn_mpeg2_stream_state(
     });
 
     Ok(Mpeg2StreamState {
-        rx,
+        rx: JoinedReceiver::new(rx, worker),
         frames: VecDeque::new(),
         width,
         height,
@@ -2298,7 +2329,7 @@ fn spawn_wmv_stream_state(
     ));
     let worker_request_ms = request_ms.clone();
     let worker_path = path.clone();
-    thread::spawn(move || {
+    let worker = thread::spawn(move || {
         lower_worker_thread_priority();
         let result = stream_wmv_video_worker(worker_path.as_path(), tx.clone(), worker_request_ms);
         if let Err(err) = result {
@@ -2307,7 +2338,7 @@ fn spawn_wmv_stream_state(
     });
 
     Ok(WmvStreamState {
-        rx,
+        rx: JoinedReceiver::new(rx, worker),
         frames: VecDeque::new(),
         width: info.width,
         height: info.height,
@@ -2575,7 +2606,7 @@ fn spawn_omv_stream_state(path: PathBuf) -> Result<OmvStreamState> {
     let (tx, rx) = mpsc::sync_channel(OMV_STREAM_CHANNEL_CAPACITY);
     let request_frame = Arc::new(AtomicUsize::new(0));
     let worker_request_frame = request_frame.clone();
-    thread::spawn(move || {
+    let worker = thread::spawn(move || {
         lower_worker_thread_priority();
         let result = stream_omv_video_worker(path.as_path(), tx.clone(), worker_request_frame);
         if let Err(err) = result {
@@ -2583,7 +2614,7 @@ fn spawn_omv_stream_state(path: PathBuf) -> Result<OmvStreamState> {
         }
     });
     Ok(OmvStreamState {
-        rx,
+        rx: JoinedReceiver::new(rx, worker),
         frames: VecDeque::new(),
         loop_head_frames: VecDeque::new(),
         loop_head_bytes: 0,
@@ -5846,7 +5877,7 @@ mod mpeg_video_pts_tests {
     fn state(frames: VecDeque<Mpeg2DecodedFrame>, timer_ms: u64) -> Mpeg2StreamState {
         let (_tx, rx) = mpsc::channel::<Result<Mpeg2StreamEvent, String>>();
         Mpeg2StreamState {
-            rx,
+            rx: super::JoinedReceiver::completed(rx),
             frames,
             width: Some(1),
             height: Some(1),
@@ -6005,7 +6036,7 @@ mod omv_loop_rewind_tests {
     fn state() -> OmvStreamState {
         let (_tx, rx) = mpsc::channel::<Result<OmvStreamEvent, String>>();
         OmvStreamState {
-            rx,
+            rx: super::JoinedReceiver::completed(rx),
             frames: VecDeque::from([(100, image(100)), (101, image(101))]),
             loop_head_frames: VecDeque::from([(0, image(0)), (1, image(1)), (2, image(2))]),
             loop_head_bytes: 12,

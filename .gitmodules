@@ -1,0 +1,3 @@
+[submodule "kira"]
+	path = vendor/kira
+	url = https://github.com/2018wzh/kira.git

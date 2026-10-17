@@ -268,6 +268,8 @@ impl SiglusHost {
         let renderer = Rc::new(RefCell::new(renderer));
         switch_startup_marker!(b"siglus_switch: host vm-init begin\n\0");
         let mut vm = Self::init_vm(&config, &boot, initial_size)?;
+        #[cfg(feature = "pausable-clock")]
+        vm.ctx.audio.check_initialization()?;
         switch_startup_marker!(b"siglus_switch: host vm-init complete\n\0");
         vm.ctx.globals.system.chihaya_display_adapter_name = chihaya_display_adapter_name;
         let capture_backend: FrameCaptureBackendRef = renderer.clone();
@@ -406,6 +408,8 @@ impl SiglusHost {
             crate::render::vita_stats::phase(crate::render::vita_stats::PUMP, start);
         }
         self.redraw()?;
+        #[cfg(feature = "pausable-clock")]
+        self.vm.ctx.audio.check_initialization()?;
         Ok(self.pending_exit || (self.vm.is_halted() && self.flow.stack.is_empty()))
     }
 
@@ -580,6 +584,18 @@ impl SiglusHost {
             crate::runtime::forms::syscom::write_global_save(&self.vm.ctx);
         }
         now
+    }
+
+    /// Suspend native time and audio together; no script pause state is altered.
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "virtual-clock"), feature = "pausable-clock"))]
+    pub fn set_suspended(&mut self, suspended: bool) {
+        crate::platform_time::set_paused(suspended);
+        self.vm.ctx.audio.set_suspended(suspended);
+        if suspended {
+            self.vm.ctx.input.clear_all();
+            self.vm.ctx.script_input.clear_all();
+        }
+        self.last_step = None;
     }
 
     pub fn vm_mut(&mut self) -> &mut SceneVm<'static> {

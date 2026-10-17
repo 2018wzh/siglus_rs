@@ -26,7 +26,7 @@ mod desktop {
         window::{Window, WindowBuilder},
     };
 
-    use wmv_decoder::{
+    use siglus_wmv_decoder::{
         AsfWmaDecoder, AsfWmv2Decoder, DecodedFrame, VideoTransferMatrix,
         asf::{AsfFile, AudioStreamInfo, VideoStreamInfo},
     };

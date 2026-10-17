@@ -15,6 +15,7 @@ macro_rules! env_is_set {
 
 pub mod app_path;
 pub mod platform_time;
+pub(crate) mod worker;
 
 pub mod assets;
 pub mod audio;
