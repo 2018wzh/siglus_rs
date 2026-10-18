@@ -204,7 +204,6 @@ pub struct SiglusHost {
     script_resume_after_redraw: bool,
     suppress_render_once: bool,
     syscom_suspended_waits: Vec<(usize, VmWait, String)>,
-    paused: bool,
     pending_exit: bool,
     last_step: Option<Instant>,
 }
@@ -285,7 +284,6 @@ impl SiglusHost {
             script_resume_after_redraw: false,
             suppress_render_once: false,
             syscom_suspended_waits: Vec::new(),
-            paused: false,
             pending_exit: false,
             last_step: None,
         })
@@ -1224,7 +1222,6 @@ impl SiglusHost {
         self.flow.stack.clear();
         self.flow.pending_syscom_proc = None;
         self.syscom_suspended_waits.clear();
-        self.paused = false;
         self.script_resume_after_redraw = false;
         self.suppress_render_once = true;
         self.vm.ctx.globals.syscom.pending_proc = None;
@@ -1290,8 +1287,7 @@ impl SiglusHost {
     fn pump_vm(&mut self) -> Result<()> {
         if env_is_set!("SG_PROC_FLOW_TRACE") {
             eprintln!(
-                "[SG_PROC_FLOW] host pump_vm start paused={} script_needs_pump={} scene={:?} line={} flow={:?} pending_proc={:?}",
-                self.paused,
+                "[SG_PROC_FLOW] host pump_vm start script_needs_pump={} scene={:?} line={} flow={:?} pending_proc={:?}",
                 self.script_needs_pump,
                 self.vm.current_scene_name(),
                 self.vm.current_line_no(),
@@ -1301,9 +1297,6 @@ impl SiglusHost {
         }
         self.script_needs_pump = false;
         self.ensure_requested_script_proc();
-        if self.paused {
-            return Ok(());
-        }
 
         self.vm.process_pending_button_actions()?;
         if env_is_set!("SG_PROC_FLOW_TRACE") {
@@ -1324,7 +1317,8 @@ impl SiglusHost {
 
         loop {
             let Some(proc) = self.flow.top().cloned() else {
-                self.paused = true;
+                // An empty stack is idle, not suspended: redraw may enqueue a
+                // native return-to-menu after the script has halted.
                 break;
             };
             if env_is_set!("SG_PROC_FLOW_TRACE") {
@@ -1838,4 +1832,42 @@ pub fn parse_bool_exit(result: Result<bool>, context: &str) -> i32 {
 
 pub fn default_frame_interval_ms(dt_ms: u32) -> u32 {
     if dt_ms == 0 { FRAME_INTERVAL_MS } else { dt_ms }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires SIGLUS_HOST_TEST_GAME writable copy and native GPU/audio"]
+    fn idle_proc_stack_accepts_return_to_menu() {
+        assert_eq!(
+            std::env::var("SIGLUS_HOST_TEST_WRITABLE_COPY").as_deref(),
+            Ok("1")
+        );
+        let project = PathBuf::from(std::env::var_os("SIGLUS_HOST_TEST_GAME").unwrap());
+        let renderer = pollster::block_on(Renderer::new_offscreen(1280, 720)).unwrap();
+        let mut host =
+            SiglusHost::new_with_renderer_sync(SiglusHostConfig::new(project), renderer).unwrap();
+        host.flow.stack.clear();
+        host.pump_vm().unwrap();
+        assert!(host.flow.stack.is_empty());
+
+        // Native redraw callbacks can schedule this after script exhaustion.
+        host.flow.push(ProcType::ReturnToMenu, 0);
+        host.pump_vm().unwrap();
+        assert_eq!(
+            host.vm.current_scene_name(),
+            Some(host.boot.menu_scene.as_str())
+        );
+        assert!(host.script_resume_after_redraw);
+        assert!(matches!(
+            host.flow.top().map(|proc| proc.ty),
+            Some(ProcType::GameTimerStart)
+        ));
+        assert!(!host.vm.is_halted());
+        host.vm.ctx.audio.shutdown().unwrap();
+        host.vm.ctx.koe.shutdown().unwrap();
+        host.vm.ctx.movie.shutdown().unwrap();
+    }
 }
