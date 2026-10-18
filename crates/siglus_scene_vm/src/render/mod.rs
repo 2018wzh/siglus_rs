@@ -23,7 +23,9 @@ use crate::render_math::sprite_quad_geometry_rect;
 use crate::runtime::FrameCaptureBackend;
 
 mod emote;
+mod hosted;
 mod mipmap;
+use hosted::OffscreenTarget;
 
 use crate::render_plan::*;
 
@@ -116,7 +118,9 @@ impl VertexSprite2d {
 
 #[derive(Debug)]
 pub struct Renderer {
-    pub surface: wgpu::Surface<'static>,
+    pub surface: Option<wgpu::Surface<'static>>,
+    offscreen: Option<OffscreenTarget>,
+    hosted_frame_generation: u64,
     /// Kept so that a replacement surface is created from the same instance (and
     /// therefore the same backend) as `device`. Android re-creates the
     /// ANativeWindow on every activity stop, and a surface built from a fresh
@@ -464,8 +468,14 @@ impl Renderer {
         let size = window.surface_size();
         let scale_factor = window.scale_factor() as f32;
         let surface = instance.create_surface(window).context("create_surface")?;
-        Self::new_from_instance_surface(instance, surface, size.width, size.height, scale_factor)
-            .await
+        Self::new_from_instance_surface(
+            instance,
+            Some(surface),
+            size.width,
+            size.height,
+            scale_factor,
+        )
+        .await
     }
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -486,7 +496,7 @@ impl Renderer {
                 raw_window_handle,
             })
             .context("create_surface_unsafe")?;
-        Self::new_from_instance_surface(instance, surface, width, height, scale_factor).await
+        Self::new_from_instance_surface(instance, Some(surface), width, height, scale_factor).await
     }
 
     /// Re-attach a new platform surface to the existing device/queue.
@@ -546,7 +556,8 @@ impl Renderer {
             );
         }
         self.config.present_mode = replacement_present_mode;
-        self.surface = surface;
+        self.surface = Some(surface);
+        self.offscreen = None;
         let scale_factor = self.scale_factor;
         self.resize_with_scale(width.max(1), height.max(1), scale_factor);
         Ok(())
@@ -554,7 +565,7 @@ impl Renderer {
 
     async fn new_from_instance_surface(
         instance: wgpu::Instance,
-        surface: wgpu::Surface<'static>,
+        surface: Option<wgpu::Surface<'static>>,
         width: u32,
         height: u32,
         scale_factor: f32,
@@ -562,11 +573,21 @@ impl Renderer {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
+                compatible_surface: surface.as_ref(),
                 force_fallback_adapter: false,
             })
             .await
             .context("request_adapter")?;
+        if surface.is_none()
+            && !matches!(
+                adapter.get_info().device_type,
+                wgpu::DeviceType::DiscreteGpu
+                    | wgpu::DeviceType::IntegratedGpu
+                    | wgpu::DeviceType::VirtualGpu
+            )
+        {
+            anyhow::bail!("hosted output requires a hardware GPU");
+        }
 
         let (device, queue) = adapter
             .request_device(
@@ -583,17 +604,23 @@ impl Renderer {
             .await
             .context("request_device")?;
 
-        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_caps = surface
+            .as_ref()
+            .map(|surface| surface.get_capabilities(&adapter));
         // The original D3D9 renderer uses A8R8G8B8/X8R8G8B8 without
         // D3DSAMP_SRGBTEXTURE or D3DRS_SRGBWRITEENABLE.  Prefer the non-sRGB
         // surface view so texture sampling, blending, and render-target writes
         // operate directly on the stored 8-bit channel values.
         let format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| !f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
+            .as_ref()
+            .map(|caps| {
+                caps.formats
+                    .iter()
+                    .copied()
+                    .find(|format| !format.is_srgb())
+                    .unwrap_or(caps.formats[0])
+            })
+            .unwrap_or(wgpu::TextureFormat::Rgba8Unorm);
         if format.is_srgb() {
             log::error!(
                 "adapter exposes no non-sRGB surface format; D3D9 byte-space blending cannot be reproduced exactly (using {format:?})"
@@ -610,14 +637,22 @@ impl Renderer {
         let logical_width = ((width as f32) / scale_factor).max(1.0);
         let logical_height = ((height as f32) / scale_factor).max(1.0);
         let alpha_mode = surface_caps
-            .alpha_modes
-            .iter()
-            .copied()
-            .find(|m| *m == wgpu::CompositeAlphaMode::Opaque)
-            .unwrap_or(surface_caps.alpha_modes[0]);
+            .as_ref()
+            .map(|caps| {
+                caps.alpha_modes
+                    .iter()
+                    .copied()
+                    .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
+                    .unwrap_or(caps.alpha_modes[0])
+            })
+            .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
         let wait_display_vsync = true;
-        let present_mode =
-            present_mode_for_wait_display_vsync(wait_display_vsync, &surface_caps.present_modes);
+        let present_mode = surface_caps
+            .as_ref()
+            .map(|caps| {
+                present_mode_for_wait_display_vsync(wait_display_vsync, &caps.present_modes)
+            })
+            .unwrap_or(wgpu::PresentMode::Fifo);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -628,7 +663,17 @@ impl Renderer {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        surface.configure(&device, &config);
+        let offscreen = if let Some(surface) = surface.as_ref() {
+            surface.configure(&device, &config);
+            None
+        } else {
+            let limit = device.limits().max_texture_dimension_2d;
+            anyhow::ensure!(
+                width <= limit && height <= limit,
+                "hosted output exceeds GPU limits"
+            );
+            Some(OffscreenTarget::new(&device, width, height))
+        };
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("siglus-sprite-bgl"),
@@ -948,6 +993,8 @@ impl Renderer {
             instance,
             adapter,
             surface,
+            offscreen,
+            hosted_frame_generation: 0,
             device,
             queue,
             config,
@@ -1089,7 +1136,10 @@ impl Renderer {
         }
         self.wait_display_vsync = wait_display_vsync;
 
-        let caps = self.surface.get_capabilities(&self.adapter);
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+        let caps = surface.get_capabilities(&self.adapter);
         let present_mode =
             present_mode_for_wait_display_vsync(wait_display_vsync, &caps.present_modes);
         if !wait_display_vsync && present_mode != wgpu::PresentMode::Immediate {
@@ -1109,7 +1159,7 @@ impl Renderer {
             return;
         }
         self.config.present_mode = present_mode;
-        self.surface.configure(&self.device, &self.config);
+        surface.configure(&self.device, &self.config);
     }
 
     pub fn scale_factor(&self) -> f32 {
@@ -1162,7 +1212,12 @@ impl Renderer {
         self.config.width = width;
         self.config.height = height;
         // Keep explicit reconfiguration for surface-loss recovery at the same size.
-        self.surface.configure(&self.device, &self.config);
+        if let Some(surface) = self.surface.as_ref() {
+            surface.configure(&self.device, &self.config);
+        } else if surface_changed {
+            self.cancel_frame_readback();
+            self.offscreen = Some(OffscreenTarget::new(&self.device, width, height));
+        }
         if surface_changed {
             self.surface_depth = create_depth_texture(&self.device, width, height);
         }
@@ -1215,7 +1270,19 @@ impl Renderer {
     }
 
     pub fn render_frame(&mut self, images: &ImageManager, frame_plan: &RenderFrame) -> Result<()> {
-        let frame = match self.surface.get_current_texture() {
+        if let Some(output) = self.offscreen.take() {
+            let result = self.render_frame_to_view(images, frame_plan, &output.view);
+            self.offscreen = Some(output);
+            if result.is_ok() {
+                self.hosted_frame_generation = self
+                    .hosted_frame_generation
+                    .checked_add(1)
+                    .context("hosted frame generation exhausted")?;
+            }
+            return result;
+        }
+        let surface = self.surface.as_ref().context("renderer has no output")?;
+        let frame = match surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 // Android hands the app a new ANativeWindow whenever the activity
@@ -1223,7 +1290,7 @@ impl Renderer {
                 // frame. Recover in place: failing here would surface as an error
                 // from `SiglusHost::step`, which the Android frame loop treats as
                 // "exit" and would freeze the picture.
-                self.surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.config);
                 return Ok(());
             }
             Err(wgpu::SurfaceError::OutOfMemory) => {
@@ -1235,6 +1302,17 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        self.render_frame_to_view(images, frame_plan, &view)?;
+        frame.present();
+        Ok(())
+    }
+
+    fn render_frame_to_view(
+        &mut self,
+        images: &ImageManager,
+        frame_plan: &RenderFrame,
+        view: &wgpu::TextureView,
+    ) -> Result<()> {
         self.debug_frame_serial = self.debug_frame_serial.wrapping_add(1);
         {
             let mut live_emote_ids = HashSet::new();
@@ -1279,16 +1357,15 @@ impl Renderer {
                 });
             self.render_copy_pass(
                 &mut encoder,
-                ColorTarget::External(&view),
+                ColorTarget::External(view),
                 final_target,
                 blit_range,
             )?;
             self.submit(encoder);
         } else {
-            self.render_ordinary_frame_to_surface(images, &frame_plan.sprites, &view)?;
+            self.render_ordinary_frame_to_surface(images, &frame_plan.sprites, view)?;
         }
 
-        frame.present();
         Ok(())
     }
 
