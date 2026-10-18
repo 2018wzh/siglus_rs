@@ -31,9 +31,6 @@ callbacks may enqueue `ReturnToMenu` after the ending script halts; the next
 pump must consume that proc and restart the configured menu. Real suspension
 continues to use `set_suspended` and the native clock/audio boundary.
 
-The ignored `host::tests::idle_proc_stack_accepts_return_to_menu` regression
-requires a disposable authorized game directory in `SIGLUS_HOST_TEST_GAME`,
-`SIGLUS_HOST_TEST_WRITABLE_COPY=1`, and native GPU/audio devices.
 ## Example screenshots
 
 ### UK2 Engine
