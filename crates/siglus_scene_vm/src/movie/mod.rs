@@ -6075,7 +6075,7 @@ mod omv_loop_rewind_tests {
     fn done_does_not_hide_the_queued_rewind_reset() {
         let (tx, rx) = mpsc::channel::<Result<OmvStreamEvent, String>>();
         let mut state = state();
-        state.rx = rx;
+        state.rx = super::JoinedReceiver::completed(rx);
         tx.send(Ok(OmvStreamEvent::Done)).expect("queue done");
         tx.send(Ok(OmvStreamEvent::Reset { frame_idx: 0 }))
             .expect("queue reset");
