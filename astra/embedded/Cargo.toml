@@ -1,0 +1,19 @@
+[package]
+name = "siglus-embedded"
+version = "1.0.0"
+edition = "2024"
+license = "MPL-2.0"
+
+[lib]
+path = "mod.rs"
+
+[workspace]
+
+[features]
+default = []
+dynamic = ["astra-emu-abi/diagnostic-bridge"]
+
+[dependencies]
+astra-emu-abi = { git = "https://github.com/2018wzh/AstraEngine.git", rev = "15a39a626b1316cb6137a75e17e14a2ff2d1ba88" }
+siglus_scene_vm = { path = "../../crates/siglus_scene_vm", features = ["pausable-clock"] }
+pollster = "0.3"

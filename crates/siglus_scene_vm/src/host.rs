@@ -206,6 +206,7 @@ pub struct SiglusHost {
     syscom_suspended_waits: Vec<(usize, VmWait, String)>,
     pending_exit: bool,
     last_step: Option<Instant>,
+    timeline_reset: bool,
 }
 
 fn find_scene_pck_for_host(project_dir: &Path) -> Result<PathBuf> {
@@ -286,6 +287,7 @@ impl SiglusHost {
             syscom_suspended_waits: Vec::new(),
             pending_exit: false,
             last_step: None,
+            timeline_reset: false,
         })
     }
 
@@ -584,6 +586,10 @@ impl SiglusHost {
         now
     }
 
+    pub fn renderer(&self) -> std::cell::Ref<'_, Renderer> {
+        self.renderer.borrow()
+    }
+
     /// Suspend native time and audio together; no script pause state is altered.
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "virtual-clock"), feature = "pausable-clock"))]
     pub fn set_suspended(&mut self, suspended: bool) {
@@ -594,6 +600,11 @@ impl SiglusHost {
             self.vm.ctx.script_input.clear_all();
         }
         self.last_step = None;
+    }
+
+    /// Consume an actual successful load/restart boundary once.
+    pub fn take_timeline_reset(&mut self) -> bool {
+        std::mem::take(&mut self.timeline_reset)
     }
 
     pub fn vm_mut(&mut self) -> &mut SceneVm<'static> {
@@ -1218,6 +1229,7 @@ impl SiglusHost {
     }
 
     fn finish_runtime_load(&mut self) {
+        self.timeline_reset = true;
         self.renderer.borrow_mut().clear_runtime_image_textures();
         self.flow.stack.clear();
         self.flow.pending_syscom_proc = None;
@@ -1247,6 +1259,7 @@ impl SiglusHost {
         // changes, so resetting the append before restart preserves that ordering.
         self.vm.ctx.reset_active_append_to_initial();
         self.vm.restart_scene_name(&target_scene, target_z)?;
+        self.timeline_reset = true;
         self.renderer.borrow_mut().clear_runtime_image_textures();
         if let Some(msgbk) = saved_msgbk {
             self.vm.ctx.globals.msgbk_forms = msgbk;
@@ -1275,6 +1288,7 @@ impl SiglusHost {
         // scene without resetting the active append.
         crate::runtime::forms::syscom::write_global_save(&self.vm.ctx);
         self.vm.restart_scene_name(&target_scene, target_z)?;
+        self.timeline_reset = true;
         self.renderer.borrow_mut().clear_runtime_image_textures();
         self.vm.ctx.globals.finish_wipe();
         self.flow.stack.clear();
@@ -1833,4 +1847,3 @@ pub fn parse_bool_exit(result: Result<bool>, context: &str) -> i32 {
 pub fn default_frame_interval_ms(dt_ms: u32) -> u32 {
     if dt_ms == 0 { FRAME_INTERVAL_MS } else { dt_ms }
 }
-

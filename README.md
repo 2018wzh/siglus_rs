@@ -31,6 +31,20 @@ callbacks may enqueue `ReturnToMenu` after the ending script halts; the next
 pump must consume that proc and restart the configured menu. Real suspension
 continues to use `set_suspended` and the native clock/audio boundary.
 
+## Astra embedded entry
+
+`astra/embedded` is a standalone native C ABI adapter pinned to the shared
+`astra-emu-abi` revision in its manifest. Its `query` function is used by both
+static registration and the dynamic `astra_emu_query` build bridge.
+The worker calls the existing `SiglusHost::step` entry; hosts submit input and
+control without driving VM ticks. Native Kira audio and original savedata remain
+core-owned.
+
+Output uses the original complete offscreen renderer and its asynchronous
+staging readback. Three immutable CPU slots bound retained output; leases can
+outlive close and be released on any thread. Raster and logical sizes are the
+game's native `SCREEN_SIZE`; unsupported overrides are rejected. Window resize
+does not resize this target. No GPU-sharing or text-Hook capability is declared.
 ## Example screenshots
 
 ### UK2 Engine
