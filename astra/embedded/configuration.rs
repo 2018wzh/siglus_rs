@@ -16,12 +16,13 @@ struct LanguageChoices([abi::Bytes; 2]);
 // Immutable library-lifetime spans, as for FORMATS.
 unsafe impl Sync for LanguageChoices {}
 static LANGUAGE_CHOICES: LanguageChoices = LanguageChoices([text("original"), text("chs")]);
+static LANGUAGE_LABELS: LanguageChoices = LanguageChoices([text("原版"), text("简体中文")]);
 struct Fields([abi::ConfigField; 2]);
 unsafe impl Sync for Fields {}
 static FIELDS: Fields = Fields([abi::ConfigField {
     id: text("resource_language"),
-    label: text("Resource language"),
-    group: text("Localization"),
+    label: text("资源语言"),
+    group: text("语言"),
     default_value: abi::ConfigValue {
         kind: abi::VALUE_ENUM,
         reserved: 0,
@@ -34,13 +35,17 @@ static FIELDS: Fields = Fields([abi::ConfigField {
     number_min: 0.0,
     number_max: 0.0,
     max_bytes: 0,
-    reserved: 0,
+    flags: 0,
     choices: LANGUAGE_CHOICES.0.as_ptr(),
     choice_count: LANGUAGE_CHOICES.0.len(),
+    description: text("选择读取的剧本与图像资源；简体中文需要游戏目录内成对的 Scene.chs 与 Gameexe.chs。"),
+    choice_labels: LANGUAGE_LABELS.0.as_ptr(),
+    step: 0.0,
+    unit: text(""),
 }, abi::ConfigField {
     id: text("save_root"),
-    label: text("Save root"),
-    group: text("Files"),
+    label: text("存档目录"),
+    group: text("文件"),
     default_value: abi::ConfigValue {
         kind: abi::VALUE_STRING,
         reserved: 0,
@@ -53,9 +58,13 @@ static FIELDS: Fields = Fields([abi::ConfigField {
     number_min: 0.0,
     number_max: 0.0,
     max_bytes: 4096,
-    reserved: 0,
+    flags: abi::CONFIG_FLAG_DIRECTORY_PATH,
     choices: std::ptr::null(),
     choice_count: 0,
+    description: text("存放存档的目录；留空时使用 AstraEMU 为该作品单独管理的存档目录，路径不相对于游戏目录。"),
+    choice_labels: std::ptr::null(),
+    step: 0.0,
+    unit: text(""),
 }]);
 
 #[derive(Debug)]
@@ -96,6 +105,22 @@ pub(super) unsafe fn parse(entries: &[abi::ConfigEntry]) -> Result<EmbeddedConfi
 }
 
 static PROBE_ID: Mutex<String> = Mutex::new(String::new());
+fn descriptor() -> abi::Descriptor {
+    abi::Descriptor {
+        header: abi::Header::of::<abi::Descriptor>(),
+        family_id: text("siglus"),
+        plugin_id: text("astra.emu.siglus"),
+        version: text(env!("CARGO_PKG_VERSION")),
+        capabilities: abi::CAP_CPU_SURFACE,
+        formats: FORMATS.0.as_ptr(),
+        format_count: 1,
+        configuration: FIELDS.0.as_ptr(),
+        configuration_count: FIELDS.0.len(),
+        display_name: text("siglus-rs"),
+        family_name: text("SiglusEngine"),
+        render: abi::RenderExtentSupport::default(),
+    }
+}
 pub(super) unsafe extern "C" fn describe(
     out: *mut abi::Descriptor,
     error: *mut abi::Error,
@@ -103,17 +128,7 @@ pub(super) unsafe extern "C" fn describe(
     boundary(error, || {
         initialized()?;
         let out = unsafe { out.as_mut() }.ok_or(abi::INVALID_ARGUMENT)?;
-        *out = abi::Descriptor {
-            header: abi::Header::of::<abi::Descriptor>(),
-            family_id: text("siglus"),
-            plugin_id: text("astra.emu.siglus"),
-            version: text(env!("CARGO_PKG_VERSION")),
-            capabilities: abi::CAP_CPU_SURFACE,
-            formats: FORMATS.0.as_ptr(),
-            format_count: 1,
-            configuration: FIELDS.0.as_ptr(),
-            configuration_count: FIELDS.0.len(),
-        };
+        *out = descriptor();
         Ok(())
     })
 }
@@ -174,7 +189,6 @@ pub(super) fn surface(width: u32, height: u32, logical: (u32, u32)) -> Result<ab
         color: abi::COLOR_SRGB,
         alpha: abi::ALPHA_IGNORED,
         rows: abi::ROWS_TOP_DOWN,
-        backend: 0,
         logical: abi::Extent {
             width: logical.0,
             height: logical.1,
@@ -213,6 +227,19 @@ mod tests {
         assert_eq!(unsafe { parse(&[entry("chs")]) }.unwrap().resource_language, resource::ResourceLanguage::Chs);
         assert_eq!(FIELDS.0.len(), 2);
         assert_eq!(unsafe { FIELDS.0[0].default_value.text.text(128) }.unwrap(), "original");
+    }
+
+    #[test]
+    fn descriptor_declares_chinese_names_labels_and_no_render_extent() {
+        let descriptor = descriptor();
+        unsafe { descriptor.validate() }.unwrap();
+        assert_eq!(unsafe { descriptor.display_name.text(64) }.unwrap(), "siglus-rs");
+        assert_eq!(unsafe { descriptor.family_name.text(64) }.unwrap(), "SiglusEngine");
+        assert_eq!(descriptor.render, abi::RenderExtentSupport::default());
+        let labels = unsafe { std::slice::from_raw_parts(FIELDS.0[0].choice_labels, 2) };
+        assert_eq!(unsafe { labels[0].text(64) }.unwrap(), "原版");
+        assert_eq!(unsafe { labels[1].text(64) }.unwrap(), "简体中文");
+        assert_eq!(FIELDS.0[1].flags, abi::CONFIG_FLAG_DIRECTORY_PATH);
     }
 
     #[test]

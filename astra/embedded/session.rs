@@ -120,6 +120,8 @@ pub(super) unsafe extern "C" fn open(
         {
             return Err(abi::INVALID_ARGUMENT.into());
         }
+        abi::RenderExtentSupport::default()
+            .validate_request(abi::CAP_CPU_SURFACE, request.render_extent)?;
         let config = unsafe {
             abi::borrowed_array(
                 request.configuration,

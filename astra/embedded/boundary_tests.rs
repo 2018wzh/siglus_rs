@@ -9,7 +9,6 @@ fn unsupported_extensions_leave_registration_and_errors_untouched() {
     assert!(std::ptr::eq(api, &API));
     for (name, version) in [
         (abi::MODULE_OWNER_EXTENSION, abi::MODULE_OWNER_VERSION),
-        (abi::D3D12_EXTENSION, abi::D3D12_EXTENSION_VERSION),
         (b"unknown.extension".as_slice(), 1),
         (abi::MODULE_OWNER_EXTENSION, u32::MAX),
     ] {
