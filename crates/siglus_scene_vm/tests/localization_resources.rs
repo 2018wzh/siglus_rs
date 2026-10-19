@@ -278,14 +278,19 @@ fn localized_movie_resolution_replaces_only_the_exact_native_logical_movie() {
     f.write("mov/other.wmv", b"public unchanged movie path fixture");
     for name in ["ED00", "ed00.WMV", "mov/ED00.wmv"] {
         let (path, ty) = resource::find_mov_path_with_append_dir(&f.0, "", name, ResourceLanguage::Chs).unwrap();
-        assert_eq!(path, f.0.join("mov_chs/ED00.wmv"));
+        assert_eq!(fs::read(path).unwrap(), b"public translated movie path fixture");
         assert_eq!(ty, resource::MovieType::Wmv);
     }
-    assert_eq!(resource::find_mov_path(&f.0, "ED00").unwrap().0, f.0.join("mov/ED00.wmv"));
-    assert_eq!(resource::find_mov_path_with_append_dir(&f.0, "", "other", ResourceLanguage::Chs).unwrap().0, f.0.join("mov/other.wmv"));
-    f.write("Select.ini", b"DLC\tPublic append\r\n");
-    f.write("DLC/mov/ED00.wmv", b"public append original movie path fixture");
-    assert_eq!(resource::find_mov_path_with_append_dir(&f.0, "DLC", "ED00", ResourceLanguage::Chs).unwrap().0, f.0.join("DLC/mov/ED00.wmv"));
+    let original = resource::find_mov_path(&f.0, "ED00").unwrap().0;
+    assert_eq!(fs::read(original).unwrap(), b"public original movie path fixture");
+    let unchanged = resource::find_mov_path_with_append_dir(&f.0, "", "other", ResourceLanguage::Chs).unwrap().0;
+    assert_eq!(fs::read(unchanged).unwrap(), b"public unchanged movie path fixture");
+    let append = Fixture::new();
+    append.write("Select.ini", b"DLC\tPublic append\r\n");
+    append.write("mov_chs/ED00.wmv", b"public unrelated root translation fixture");
+    append.write("DLC/mov/ED00.wmv", b"public append original movie path fixture");
+    let movie = resource::find_mov_path_with_append_dir(&append.0, "DLC", "ED00", ResourceLanguage::Chs).unwrap().0;
+    assert_eq!(fs::read(movie).unwrap(), b"public append original movie path fixture");
 }
 
 #[test]
