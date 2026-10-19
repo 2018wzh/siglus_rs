@@ -995,6 +995,7 @@ pub struct SelectedGameexe {
 pub fn load_selected_gameexe(
     project_dir: &Path,
     language: ResourceLanguage,
+    read_only_inputs: bool,
 ) -> Result<SelectedGameexe> {
     let path = language.initial_gameexe_path(project_dir)?;
     let raw = read_file_bytes(&path)?;
@@ -1002,8 +1003,8 @@ pub fn load_selected_gameexe(
         (String::from_utf8(raw)?, None)
     } else {
         let options = match language {
-            ResourceLanguage::Original => load_gameexe_decode_options(project_dir)?,
-            ResourceLanguage::Chs => {
+            ResourceLanguage::Original if !read_only_inputs => load_gameexe_decode_options(project_dir)?,
+            _ => {
                 siglus_assets::gameexe::GameexeDecodeOptions::from_project_dir(project_dir)?
             }
         };

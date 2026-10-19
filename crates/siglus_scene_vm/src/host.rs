@@ -59,6 +59,8 @@ macro_rules! switch_startup_marker {
 pub struct SiglusHostConfig {
     pub project_dir: PathBuf,
     pub resource_language: crate::resource::ResourceLanguage,
+    /// None retains the standalone original save policy; embedded hosts always set this.
+    pub save_root: Option<PathBuf>,
     pub scene_name: Option<String>,
     pub scene_id: Option<usize>,
     pub width: Option<u32>,
@@ -70,6 +72,7 @@ impl SiglusHostConfig {
         Self {
             project_dir,
             resource_language: crate::resource::ResourceLanguage::Original,
+            save_root: None,
             scene_name: None,
             scene_id: None,
             width: None,
@@ -223,6 +226,7 @@ impl SiglusHost {
         let gameexe = match crate::resource::load_selected_gameexe(
             &config.project_dir,
             config.resource_language,
+            config.save_root.is_some(),
         ) {
             Ok(decoded) => Some(decoded.config),
             Err(err) if config.resource_language == crate::resource::ResourceLanguage::Chs => {
@@ -646,7 +650,11 @@ impl SiglusHost {
         switch_startup_marker!(b"siglus_switch: vm scene-pck-path begin\n\0");
         let scene_pck_path = config.resource_language.initial_scene_path(&project_dir)?;
         switch_startup_marker!(b"siglus_switch: vm scene-pck-path complete\n\0");
-        let opt = config.resource_language.scene_decode_options(&project_dir)?;
+        let opt = if config.save_root.is_some() {
+            siglus_assets::scene_pck::ScenePckDecodeOptions::from_project_dir(&project_dir)?
+        } else {
+            config.resource_language.scene_decode_options(&project_dir)?
+        };
         switch_startup_marker!(b"siglus_switch: vm scene-pck-open begin\n\0");
         let pck = {
             #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
@@ -699,7 +707,9 @@ impl SiglusHost {
         };
         stream.jump_to_z_label(start_z.max(0) as usize)?;
         switch_startup_marker!(b"siglus_switch: vm command-context begin\n\0");
-        let mut ctx = CommandContext::new_with_resource_language(project_dir, config.resource_language)?;
+        let mut ctx = CommandContext::new_with_resource_language(
+            project_dir, config.resource_language, config.save_root.as_deref(),
+        )?;
         switch_startup_marker!(b"siglus_switch: vm command-context complete\n\0");
         let active_append = ctx.globals.append_dir.clone();
         switch_startup_marker!(b"siglus_switch: vm scene-metadata begin\n\0");

@@ -396,6 +396,7 @@ pub struct CommandContext {
     pub int_vec_pool: IntVecPool,
     pub project_dir: PathBuf,
     resource_language: crate::resource::ResourceLanguage,
+    save_base_dir: PathBuf,
 
     /// Project-wide variable DWORD used by encrypted Emote PSB files. Native
     /// hosts preload/recover this before scene execution; direct VM users still
@@ -1502,24 +1503,69 @@ impl CommandContext {
     pub fn new(project_dir: PathBuf) -> Self {
         let mut unknown = unknown::UnknownOpRecorder::default();
         let tables = tables::AssetTables::load(&project_dir, &mut unknown);
-        Self::with_tables(project_dir, crate::resource::ResourceLanguage::Original, unknown, tables)
+        let save_base_dir = project_dir.clone();
+        Self::with_tables(project_dir, save_base_dir, crate::resource::ResourceLanguage::Original, unknown, tables)
     }
 
     pub fn new_with_resource_language(
         project_dir: PathBuf,
         language: crate::resource::ResourceLanguage,
+        save_root: Option<&Path>,
     ) -> Result<Self> {
+        let save_base_dir = match save_root {
+            Some(root) => crate::original_save::managed_save_base(&project_dir, language, root)?,
+            None if language == crate::resource::ResourceLanguage::Chs => {
+                let root = crate::original_save::default_managed_save_root(&project_dir)?;
+                crate::original_save::managed_save_base(&project_dir, language, &root)?
+            }
+            None => project_dir.clone(),
+        };
         let mut unknown = unknown::UnknownOpRecorder::default();
-        let tables = tables::AssetTables::load_with_language(&project_dir, language, &mut unknown)?;
-        Ok(Self::with_tables(project_dir, language, unknown, tables))
+        let read_only_inputs = save_base_dir != project_dir;
+        let tables = tables::AssetTables::load_with_language(&project_dir, language, read_only_inputs, &mut unknown)?;
+        Ok(Self::with_tables(project_dir, save_base_dir, language, unknown, tables))
     }
 
     pub fn resource_language(&self) -> crate::resource::ResourceLanguage {
         self.resource_language
     }
 
+    pub fn save_base_dir(&self) -> &Path {
+        &self.save_base_dir
+    }
+
+    /// Capture/script-owned output paths stay inside the managed save namespace.
+    pub fn save_path(&self, raw: &str) -> Result<PathBuf> {
+        let normalized = raw.replace('\\', "/");
+        let path = Path::new(&normalized);
+        if self.save_base_dir == self.project_dir {
+            return Ok(if path.is_absolute() { path.to_path_buf() } else { self.save_base_dir.join(path) });
+        }
+        if path.is_absolute()
+            || normalized.contains(':')
+            || normalized.contains('\0')
+            || path.components().any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::Prefix(_)))
+        {
+            anyhow::bail!("managed save filename must stay relative to its save namespace");
+        }
+        let resolved = crate::original_save::canonical_future_path(&self.save_base_dir.join(path))?;
+        if !resolved.starts_with(&self.save_base_dir) {
+            anyhow::bail!("managed save filename escapes its save namespace");
+        }
+        Ok(resolved)
+    }
+
+    pub fn scene_decode_options(&self) -> Result<ScenePckDecodeOptions> {
+        if self.save_base_dir != self.project_dir {
+            ScenePckDecodeOptions::from_project_dir(&self.project_dir)
+        } else {
+            self.resource_language.scene_decode_options(&self.project_dir)
+        }
+    }
+
     fn with_tables(
         project_dir: PathBuf,
+        save_base_dir: PathBuf,
         language: crate::resource::ResourceLanguage,
         unknown: unknown::UnknownOpRecorder,
         tables: tables::AssetTables,
@@ -1527,7 +1573,7 @@ impl CommandContext {
         // CHS uses only explicit project keys, without writing discovery results
         // into the input installation. Preserve original-mode preload behavior.
         #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-        let emote_key = if language == crate::resource::ResourceLanguage::Original {
+        let emote_key = if language == crate::resource::ResourceLanguage::Original && save_base_dir == project_dir {
             crate::emote_key::preload_emote_key(&project_dir)
         } else {
             crate::resource::load_project_emote_key(&project_dir).ok().flatten()
@@ -1556,6 +1602,7 @@ impl CommandContext {
             movie: MovieManager::new_with_resource_language(project_dir.clone(), language),
             project_dir,
             resource_language: language,
+            save_base_dir,
             emote_key,
             solid_white,
             tables,
@@ -2206,7 +2253,7 @@ impl CommandContext {
         let pck = {
             let scene_pck_path =
                 self.resource_language.scene_path_for_append(&self.project_dir, &active_append)?;
-            let opt = self.resource_language.scene_decode_options(&self.project_dir)?;
+            let opt = self.scene_decode_options()?;
             ScenePck::load_lazy(&scene_pck_path, &opt)?
         };
         self.install_scene_metadata(&active_append, &pck)?;

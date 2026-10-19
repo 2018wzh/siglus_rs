@@ -1,6 +1,6 @@
 use super::{abi, boundary, initialized, Failure, Result};
 use siglus_scene_vm::resource;
-use std::{path::Path, sync::Mutex};
+use std::{path::{Path, PathBuf}, sync::Mutex};
 
 const fn text(s: &'static str) -> abi::Bytes {
     abi::Bytes {
@@ -16,7 +16,7 @@ struct LanguageChoices([abi::Bytes; 2]);
 // Immutable library-lifetime spans, as for FORMATS.
 unsafe impl Sync for LanguageChoices {}
 static LANGUAGE_CHOICES: LanguageChoices = LanguageChoices([text("original"), text("chs")]);
-struct Fields([abi::ConfigField; 1]);
+struct Fields([abi::ConfigField; 2]);
 unsafe impl Sync for Fields {}
 static FIELDS: Fields = Fields([abi::ConfigField {
     id: text("resource_language"),
@@ -37,9 +37,34 @@ static FIELDS: Fields = Fields([abi::ConfigField {
     reserved: 0,
     choices: LANGUAGE_CHOICES.0.as_ptr(),
     choice_count: LANGUAGE_CHOICES.0.len(),
+}, abi::ConfigField {
+    id: text("save_root"),
+    label: text("Save root"),
+    group: text("Files"),
+    default_value: abi::ConfigValue {
+        kind: abi::VALUE_STRING,
+        reserved: 0,
+        integer: 0,
+        number: 0.0,
+        text: text(""),
+    },
+    integer_min: 0,
+    integer_max: 0,
+    number_min: 0.0,
+    number_max: 0.0,
+    max_bytes: 4096,
+    reserved: 0,
+    choices: std::ptr::null(),
+    choice_count: 0,
 }]);
 
-pub(super) unsafe fn parse(entries: &[abi::ConfigEntry]) -> Result<resource::ResourceLanguage> {
+#[derive(Debug)]
+pub(super) struct EmbeddedConfig {
+    pub resource_language: resource::ResourceLanguage,
+    pub save_root: Option<PathBuf>,
+}
+
+pub(super) unsafe fn parse(entries: &[abi::ConfigEntry]) -> Result<EmbeddedConfig> {
     unsafe { abi::validate_config(&FIELDS.0, entries) }.map_err(|e| {
         Failure::new(
             abi::INVALID_ARGUMENT,
@@ -47,16 +72,27 @@ pub(super) unsafe fn parse(entries: &[abi::ConfigEntry]) -> Result<resource::Res
             format!("configuration {}: {}", e.index, e.reason),
         )
     })?;
+    let mut config = EmbeddedConfig {
+        resource_language: resource::ResourceLanguage::Original,
+        save_root: None,
+    };
     for entry in entries {
-        if unsafe { entry.id.text(128)? } == "resource_language" {
-            return match unsafe { entry.value.text.text(128)? } {
-                "original" => Ok(resource::ResourceLanguage::Original),
-                "chs" => Ok(resource::ResourceLanguage::Chs),
-                _ => Err(abi::INVALID_ARGUMENT.into()),
-            };
+        match unsafe { entry.id.text(128)? } {
+            "resource_language" => {
+                config.resource_language = match unsafe { entry.value.text.text(128)? } {
+                    "original" => resource::ResourceLanguage::Original,
+                    "chs" => resource::ResourceLanguage::Chs,
+                    _ => return Err(abi::INVALID_ARGUMENT.into()),
+                };
+            }
+            "save_root" => {
+                let value = unsafe { entry.value.text.text(4096)? };
+                if !value.is_empty() { config.save_root = Some(PathBuf::from(value)); }
+            }
+            _ => return Err(abi::INVALID_ARGUMENT.into()),
         }
     }
-    Ok(resource::ResourceLanguage::Original)
+    Ok(config)
 }
 
 static PROBE_ID: Mutex<String> = Mutex::new(String::new());
@@ -112,7 +148,7 @@ pub(super) unsafe extern "C" fn probe(
     })
 }
 pub(super) fn screen_size(root: &Path, language: resource::ResourceLanguage) -> Result<(u32, u32)> {
-    let config = resource::load_selected_gameexe(root, language).map_err(Failure::native)?.config;
+    let config = resource::load_selected_gameexe(root, language, true).map_err(Failure::native)?.config;
     let Some(entry) = config.get_entry("SCREEN_SIZE") else {
         return Ok((1280, 720));
     };
@@ -170,10 +206,12 @@ mod tests {
     #[test]
     fn language_schema_is_typed_and_original_by_default() {
         unsafe { abi::validate_config(&FIELDS.0, &[]) }.unwrap();
-        assert_eq!(unsafe { parse(&[]) }.unwrap(), resource::ResourceLanguage::Original);
-        assert_eq!(unsafe { parse(&[entry("original")]) }.unwrap(), resource::ResourceLanguage::Original);
-        assert_eq!(unsafe { parse(&[entry("chs")]) }.unwrap(), resource::ResourceLanguage::Chs);
-        assert_eq!(FIELDS.0.len(), 1);
+        let default = unsafe { parse(&[]) }.unwrap();
+        assert_eq!(default.resource_language, resource::ResourceLanguage::Original);
+        assert!(default.save_root.is_none());
+        assert_eq!(unsafe { parse(&[entry("original")]) }.unwrap().resource_language, resource::ResourceLanguage::Original);
+        assert_eq!(unsafe { parse(&[entry("chs")]) }.unwrap().resource_language, resource::ResourceLanguage::Chs);
+        assert_eq!(FIELDS.0.len(), 2);
         assert_eq!(unsafe { FIELDS.0[0].default_value.text.text(128) }.unwrap(), "original");
     }
 
@@ -187,5 +225,19 @@ mod tests {
         let mut unknown = entry("chs");
         unknown.id = text("unknown_language");
         assert!(unsafe { parse(&[unknown]) }.is_err());
+    }
+
+    #[test]
+    fn save_root_is_a_typed_string_and_does_not_hide_language_selection() {
+        let mut root = entry("D:/public-save-root");
+        root.id = text("save_root");
+        root.value.kind = abi::VALUE_STRING;
+        for entries in [[root, entry("chs")], [entry("chs"), root]] {
+            let config = unsafe { parse(&entries) }.unwrap();
+            assert_eq!(config.resource_language, resource::ResourceLanguage::Chs);
+            assert_eq!(config.save_root, Some(PathBuf::from("D:/public-save-root")));
+        }
+        root.value.kind = abi::VALUE_ENUM;
+        assert!(unsafe { parse(&[root]) }.is_err());
     }
 }
