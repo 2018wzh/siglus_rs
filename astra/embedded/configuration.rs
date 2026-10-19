@@ -1,5 +1,5 @@
 use super::{abi, boundary, initialized, Failure, Result};
-use siglus_scene_vm::{formats::gameexe, resource};
+use siglus_scene_vm::resource;
 use std::{path::Path, sync::Mutex};
 
 const fn text(s: &'static str) -> abi::Bytes {
@@ -12,6 +12,53 @@ struct Formats([abi::Bytes; 1]);
 // All spans point to immutable library-lifetime literals.
 unsafe impl Sync for Formats {}
 static FORMATS: Formats = Formats([text("siglus.scene_pck")]);
+struct LanguageChoices([abi::Bytes; 2]);
+// Immutable library-lifetime spans, as for FORMATS.
+unsafe impl Sync for LanguageChoices {}
+static LANGUAGE_CHOICES: LanguageChoices = LanguageChoices([text("original"), text("chs")]);
+struct Fields([abi::ConfigField; 1]);
+unsafe impl Sync for Fields {}
+static FIELDS: Fields = Fields([abi::ConfigField {
+    id: text("resource_language"),
+    label: text("Resource language"),
+    group: text("Localization"),
+    default_value: abi::ConfigValue {
+        kind: abi::VALUE_ENUM,
+        reserved: 0,
+        integer: 0,
+        number: 0.0,
+        text: text("original"),
+    },
+    integer_min: 0,
+    integer_max: 0,
+    number_min: 0.0,
+    number_max: 0.0,
+    max_bytes: 0,
+    reserved: 0,
+    choices: LANGUAGE_CHOICES.0.as_ptr(),
+    choice_count: LANGUAGE_CHOICES.0.len(),
+}]);
+
+pub(super) unsafe fn parse(entries: &[abi::ConfigEntry]) -> Result<resource::ResourceLanguage> {
+    unsafe { abi::validate_config(&FIELDS.0, entries) }.map_err(|e| {
+        Failure::new(
+            abi::INVALID_ARGUMENT,
+            "ASTRA_EMU_SIGLUS_CONFIG",
+            format!("configuration {}: {}", e.index, e.reason),
+        )
+    })?;
+    for entry in entries {
+        if unsafe { entry.id.text(128)? } == "resource_language" {
+            return match unsafe { entry.value.text.text(128)? } {
+                "original" => Ok(resource::ResourceLanguage::Original),
+                "chs" => Ok(resource::ResourceLanguage::Chs),
+                _ => Err(abi::INVALID_ARGUMENT.into()),
+            };
+        }
+    }
+    Ok(resource::ResourceLanguage::Original)
+}
+
 static PROBE_ID: Mutex<String> = Mutex::new(String::new());
 pub(super) unsafe extern "C" fn describe(
     out: *mut abi::Descriptor,
@@ -28,8 +75,8 @@ pub(super) unsafe extern "C" fn describe(
             capabilities: abi::CAP_CPU_SURFACE,
             formats: FORMATS.0.as_ptr(),
             format_count: 1,
-            configuration: std::ptr::null(),
-            configuration_count: 0,
+            configuration: FIELDS.0.as_ptr(),
+            configuration_count: FIELDS.0.len(),
         };
         Ok(())
     })
@@ -64,22 +111,8 @@ pub(super) unsafe extern "C" fn probe(
         Ok(())
     })
 }
-pub(super) fn screen_size(root: &Path) -> Result<(u32, u32)> {
-    let path = resource::find_initial_gameexe_path(root).map_err(Failure::native)?;
-    let bytes = std::fs::read(&path).map_err(Failure::native)?;
-    let text = if path
-        .extension()
-        .and_then(|s| s.to_str())
-        .is_some_and(|s| s.eq_ignore_ascii_case("ini"))
-    {
-        String::from_utf8(bytes).map_err(Failure::native)?
-    } else {
-        let options = resource::load_gameexe_decode_options(root).map_err(Failure::native)?;
-        gameexe::decode_gameexe_dat_bytes(&bytes, &options)
-            .map_err(Failure::native)?
-            .0
-    };
-    let config = gameexe::GameexeConfig::from_text(&text);
+pub(super) fn screen_size(root: &Path, language: resource::ResourceLanguage) -> Result<(u32, u32)> {
+    let config = resource::load_selected_gameexe(root, language).map_err(Failure::native)?.config;
     let Some(entry) = config.get_entry("SCREEN_SIZE") else {
         return Ok((1280, 720));
     };
@@ -115,4 +148,44 @@ pub(super) fn surface(width: u32, height: u32, logical: (u32, u32)) -> Result<ab
     };
     info.validate()?;
     Ok(info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(value: &'static str) -> abi::ConfigEntry {
+        abi::ConfigEntry {
+            id: text("resource_language"),
+            value: abi::ConfigValue {
+                kind: abi::VALUE_ENUM,
+                reserved: 0,
+                integer: 0,
+                number: 0.0,
+                text: text(value),
+            },
+        }
+    }
+
+    #[test]
+    fn language_schema_is_typed_and_original_by_default() {
+        unsafe { abi::validate_config(&FIELDS.0, &[]) }.unwrap();
+        assert_eq!(unsafe { parse(&[]) }.unwrap(), resource::ResourceLanguage::Original);
+        assert_eq!(unsafe { parse(&[entry("original")]) }.unwrap(), resource::ResourceLanguage::Original);
+        assert_eq!(unsafe { parse(&[entry("chs")]) }.unwrap(), resource::ResourceLanguage::Chs);
+        assert_eq!(FIELDS.0.len(), 1);
+        assert_eq!(unsafe { FIELDS.0[0].default_value.text.text(128) }.unwrap(), "original");
+    }
+
+    #[test]
+    fn invalid_language_type_choice_or_duplicate_is_rejected() {
+        let mut wrong_type = entry("chs");
+        wrong_type.value.kind = abi::VALUE_STRING;
+        assert!(unsafe { parse(&[wrong_type]) }.is_err());
+        assert!(unsafe { parse(&[entry("auto")]) }.is_err());
+        assert!(unsafe { parse(&[entry("original"), entry("chs")]) }.is_err());
+        let mut unknown = entry("chs");
+        unknown.id = text("unknown_language");
+        assert!(unsafe { parse(&[unknown]) }.is_err());
+    }
 }

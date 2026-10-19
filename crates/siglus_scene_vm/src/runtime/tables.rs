@@ -471,8 +471,20 @@ impl Default for AssetTables {
 }
 
 impl AssetTables {
+    pub fn load_with_language(
+        project_dir: &Path,
+        language: crate::resource::ResourceLanguage,
+        unknown: &mut UnknownOpRecorder,
+    ) -> anyhow::Result<Self> {
+        if language == crate::resource::ResourceLanguage::Original {
+            return Ok(Self::load(project_dir, unknown));
+        }
+        let decoded = crate::resource::load_selected_gameexe(project_dir, language)?;
+        Ok(Self::from_decoded(project_dir, unknown, decoded.text, decoded.config, decoded.report))
+    }
+
     pub fn load(project_dir: &Path, unknown: &mut UnknownOpRecorder) -> Self {
-        let mut out = Self::default();
+        let out = Self::default();
 
         let gameexe_path = match crate::resource::find_initial_gameexe_path(project_dir) {
             Ok(path) => path,
@@ -521,7 +533,18 @@ impl AssetTables {
             }
         };
 
-        let cfg = GameexeConfig::from_text(&text);
+        let config = GameexeConfig::from_text(&text);
+        Self::from_decoded(project_dir, unknown, text, config, report)
+    }
+
+    fn from_decoded(
+        project_dir: &Path,
+        unknown: &mut UnknownOpRecorder,
+        text: String,
+        cfg: GameexeConfig,
+        report: Option<GameexeDecodeReport>,
+    ) -> Self {
+        let mut out = Self::default();
         out.gameexe_report = report;
         out.button_se_templates = load_button_se_templates(&cfg);
         out.button_action_templates = load_button_action_templates(&cfg);

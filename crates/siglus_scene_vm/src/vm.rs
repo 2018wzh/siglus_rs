@@ -1997,8 +1997,8 @@ impl<'a> SceneVm<'a> {
         self.scene_name_resolve_cache.clear();
         self.user_cmd_resolve_cache.clear();
 
-        let scene_pck_path =
-            crate::resource::find_scene_pck_path_for_append(&self.ctx.project_dir, &active_append)?;
+        let scene_pck_path = self.ctx.resource_language()
+            .scene_path_for_append(&self.ctx.project_dir, &active_append)?;
 
         #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         {
@@ -2028,7 +2028,7 @@ impl<'a> SceneVm<'a> {
 
         #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         {
-            let opt = crate::resource::load_scene_pck_decode_options(&self.ctx.project_dir)?;
+            let opt = self.ctx.resource_language().scene_decode_options(&self.ctx.project_dir)?;
             self.scene_pck_cache = Some(ScenePck::load_lazy(&scene_pck_path, &opt)?);
         }
 

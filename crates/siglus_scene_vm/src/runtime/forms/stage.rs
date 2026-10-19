@@ -5259,6 +5259,7 @@ fn sample_object_pixel_component(
         ctx.images.project_dir(),
         &ctx.globals.append_dir,
         &file,
+        ctx.resource_language,
     ) else {
         return 0;
     };
@@ -11434,6 +11435,7 @@ fn dispatch_object_state_op(
                 ctx.images.project_dir(),
                 &ctx.globals.append_dir,
                 name,
+                ctx.resource_language,
             )
         {
             match pct {
@@ -11508,6 +11510,7 @@ fn dispatch_object_state_op(
                             ctx.images.project_dir(),
                             &ctx.globals.append_dir,
                             name,
+                            ctx.resource_language,
                         )
                         && let Ok(id) = ctx.images.load_file(&path, pat)
                         && let Some((width, height)) = ctx.images.original_size(&id)

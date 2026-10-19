@@ -127,14 +127,7 @@ pub(super) unsafe extern "C" fn open(
                 abi::MAX_CONFIG_FIELDS,
             )?
         };
-        // The original Siglus adapter exposes no render overrides; R is its native L.
-        unsafe { abi::validate_config(&[], config) }.map_err(|e| {
-            Failure::new(
-                abi::INVALID_ARGUMENT,
-                "ASTRA_EMU_SIGLUS_CONFIG",
-                format!("configuration {}: {}", e.index, e.reason),
-            )
-        })?;
+        let resource_language = unsafe { configuration::parse(config) }?;
         let path = PathBuf::from(unsafe { request.game_path.text(32768)? });
         if !path.is_dir() {
             return Err(abi::INVALID_ARGUMENT.into());
@@ -181,7 +174,7 @@ pub(super) unsafe extern "C" fn open(
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run(&owner, path, window, ready_tx)
+                    run(&owner, path, resource_language, window, ready_tx)
                 }))
                 .unwrap_or_else(|_| {
                     Err(Failure::new(
@@ -235,16 +228,18 @@ pub(super) unsafe extern "C" fn open(
 fn run(
     shared: &Shared,
     path: PathBuf,
+    resource_language: siglus_scene_vm::resource::ResourceLanguage,
     window: abi::WindowState,
     ready: mpsc::SyncSender<abi::SurfaceInfo>,
 ) -> Result<()> {
     shared.host_cancel.check(shared.epoch)?;
-    let (width, height) = configuration::screen_size(&path)?;
+    let (width, height) = configuration::screen_size(&path, resource_language)?;
     shared.host_cancel.check(shared.epoch)?;
     let renderer =
         pollster::block_on(Renderer::new_offscreen(width, height)).map_err(Failure::native)?;
     shared.host_cancel.check(shared.epoch)?;
     let mut config = SiglusHostConfig::new(path);
+    config.resource_language = resource_language;
     config.width = Some(width);
     config.height = Some(height);
     let mut host = SiglusHost::new_with_renderer_sync(config, renderer).map_err(Failure::native)?;

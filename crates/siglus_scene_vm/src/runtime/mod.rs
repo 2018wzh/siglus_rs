@@ -395,6 +395,7 @@ pub struct CommandContext {
     /// Reused element/chain buffers (see `IntVecPool`).
     pub int_vec_pool: IntVecPool,
     pub project_dir: PathBuf,
+    resource_language: crate::resource::ResourceLanguage,
 
     /// Project-wide variable DWORD used by encrypted Emote PSB files. Native
     /// hosts preload/recover this before scene execution; direct VM users still
@@ -1501,10 +1502,36 @@ impl CommandContext {
     pub fn new(project_dir: PathBuf) -> Self {
         let mut unknown = unknown::UnknownOpRecorder::default();
         let tables = tables::AssetTables::load(&project_dir, &mut unknown);
-        // All native entry points (including the desktop executable) must
-        // recover/cache the PSB key before script execution can create a model.
+        Self::with_tables(project_dir, crate::resource::ResourceLanguage::Original, unknown, tables)
+    }
+
+    pub fn new_with_resource_language(
+        project_dir: PathBuf,
+        language: crate::resource::ResourceLanguage,
+    ) -> Result<Self> {
+        let mut unknown = unknown::UnknownOpRecorder::default();
+        let tables = tables::AssetTables::load_with_language(&project_dir, language, &mut unknown)?;
+        Ok(Self::with_tables(project_dir, language, unknown, tables))
+    }
+
+    pub fn resource_language(&self) -> crate::resource::ResourceLanguage {
+        self.resource_language
+    }
+
+    fn with_tables(
+        project_dir: PathBuf,
+        language: crate::resource::ResourceLanguage,
+        unknown: unknown::UnknownOpRecorder,
+        tables: tables::AssetTables,
+    ) -> Self {
+        // CHS uses only explicit project keys, without writing discovery results
+        // into the input installation. Preserve original-mode preload behavior.
         #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-        let emote_key = crate::emote_key::preload_emote_key(&project_dir);
+        let emote_key = if language == crate::resource::ResourceLanguage::Original {
+            crate::emote_key::preload_emote_key(&project_dir)
+        } else {
+            crate::resource::load_project_emote_key(&project_dir).ok().flatten()
+        };
         #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         let emote_key = crate::resource::load_project_emote_key(&project_dir)
             .ok()
@@ -1514,7 +1541,7 @@ impl CommandContext {
         let ids = constants::RuntimeConstants::default();
 
         let audio = AudioHub::new();
-        let mut images = ImageManager::new(project_dir.clone());
+        let mut images = ImageManager::new_with_resource_language(project_dir.clone(), language);
         let solid_white = images.solid_rgba((255, 255, 255, 255));
         let tonecurve = tonecurve::ToneCurveRuntime::new(&project_dir);
 
@@ -1526,8 +1553,9 @@ impl CommandContext {
             koe: KoeEngine::new(project_dir.clone()),
             pcm: PcmEngine::new(project_dir.clone()),
             se: SeEngine::new(project_dir.clone()),
-            movie: MovieManager::new(project_dir.clone()),
+            movie: MovieManager::new_with_resource_language(project_dir.clone(), language),
             project_dir,
+            resource_language: language,
             emote_key,
             solid_white,
             tables,
@@ -1957,6 +1985,7 @@ impl CommandContext {
             &self.project_dir,
             self.images.current_append_dir(),
             &file_name,
+            self.resource_language,
         ) {
             Ok(v) => v,
             Err(err) => {
@@ -2149,7 +2178,7 @@ impl CommandContext {
         #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         let pck = {
             let scene_pck_path =
-                crate::resource::find_scene_pck_path_for_append(&self.project_dir, &active_append)?;
+                self.resource_language.scene_path_for_append(&self.project_dir, &active_append)?;
             let bytes = crate::resource::read_file_bytes(&scene_pck_path)?;
             let key_cfg = ["key.toml", "Key.toml"].iter().find_map(|name| {
                 let p = self.project_dir.join(name);
@@ -2176,8 +2205,8 @@ impl CommandContext {
         #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         let pck = {
             let scene_pck_path =
-                crate::resource::find_scene_pck_path_for_append(&self.project_dir, &active_append)?;
-            let opt = crate::resource::load_scene_pck_decode_options(&self.project_dir)?;
+                self.resource_language.scene_path_for_append(&self.project_dir, &active_append)?;
+            let opt = self.resource_language.scene_decode_options(&self.project_dir)?;
             ScenePck::load_lazy(&scene_pck_path, &opt)?
         };
         self.install_scene_metadata(&active_append, &pck)?;
