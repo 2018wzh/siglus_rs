@@ -1,6 +1,9 @@
 use super::{abi, boundary, initialized, Failure, Result};
 use siglus_scene_vm::resource;
-use std::{path::{Path, PathBuf}, sync::Mutex};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 const fn text(s: &'static str) -> abi::Bytes {
     abi::Bytes {
@@ -96,7 +99,9 @@ pub(super) unsafe fn parse(entries: &[abi::ConfigEntry]) -> Result<EmbeddedConfi
             }
             "save_root" => {
                 let value = unsafe { entry.value.text.text(4096)? };
-                if !value.is_empty() { config.save_root = Some(PathBuf::from(value)); }
+                if !value.is_empty() {
+                    config.save_root = Some(PathBuf::from(value));
+                }
             }
             _ => return Err(abi::INVALID_ARGUMENT.into()),
         }
@@ -163,7 +168,9 @@ pub(super) unsafe extern "C" fn probe(
     })
 }
 pub(super) fn screen_size(root: &Path, language: resource::ResourceLanguage) -> Result<(u32, u32)> {
-    let config = resource::load_selected_gameexe(root, language, true).map_err(Failure::native)?.config;
+    let config = resource::load_selected_gameexe(root, language, true)
+        .map_err(Failure::native)?
+        .config;
     let Some(entry) = config.get_entry("SCREEN_SIZE") else {
         return Ok((1280, 720));
     };
@@ -221,20 +228,40 @@ mod tests {
     fn language_schema_is_typed_and_original_by_default() {
         unsafe { abi::validate_config(&FIELDS.0, &[]) }.unwrap();
         let default = unsafe { parse(&[]) }.unwrap();
-        assert_eq!(default.resource_language, resource::ResourceLanguage::Original);
+        assert_eq!(
+            default.resource_language,
+            resource::ResourceLanguage::Original
+        );
         assert!(default.save_root.is_none());
-        assert_eq!(unsafe { parse(&[entry("original")]) }.unwrap().resource_language, resource::ResourceLanguage::Original);
-        assert_eq!(unsafe { parse(&[entry("chs")]) }.unwrap().resource_language, resource::ResourceLanguage::Chs);
+        assert_eq!(
+            unsafe { parse(&[entry("original")]) }
+                .unwrap()
+                .resource_language,
+            resource::ResourceLanguage::Original
+        );
+        assert_eq!(
+            unsafe { parse(&[entry("chs")]) }.unwrap().resource_language,
+            resource::ResourceLanguage::Chs
+        );
         assert_eq!(FIELDS.0.len(), 2);
-        assert_eq!(unsafe { FIELDS.0[0].default_value.text.text(128) }.unwrap(), "original");
+        assert_eq!(
+            unsafe { FIELDS.0[0].default_value.text.text(128) }.unwrap(),
+            "original"
+        );
     }
 
     #[test]
     fn descriptor_declares_chinese_names_labels_and_no_render_extent() {
         let descriptor = descriptor();
         unsafe { descriptor.validate() }.unwrap();
-        assert_eq!(unsafe { descriptor.display_name.text(64) }.unwrap(), "siglus-rs");
-        assert_eq!(unsafe { descriptor.family_name.text(64) }.unwrap(), "SiglusEngine");
+        assert_eq!(
+            unsafe { descriptor.display_name.text(64) }.unwrap(),
+            "siglus-rs"
+        );
+        assert_eq!(
+            unsafe { descriptor.family_name.text(64) }.unwrap(),
+            "SiglusEngine"
+        );
         assert_eq!(descriptor.render, abi::RenderExtentSupport::default());
         let labels = unsafe { std::slice::from_raw_parts(FIELDS.0[0].choice_labels, 2) };
         assert_eq!(unsafe { labels[0].text(64) }.unwrap(), "原版");

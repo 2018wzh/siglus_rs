@@ -148,11 +148,11 @@ fn key_code(key: &str) -> Option<i32> {
         "ArrowDown" => 0x28,
         // The desktop core routes these unmapped physical keys through
         // key_event's wait-key/direct-text handling, not an unsupported error.
-        "Insert" | "PageUp" | "PageDown" | "Numpad0" | "Numpad1" | "Numpad2"
-        | "Numpad3" | "Numpad4" | "Numpad5" | "Numpad6" | "Numpad7" | "Numpad8"
-        | "Numpad9" | "NumpadAdd" | "NumpadSubtract" | "NumpadMultiply" | "NumpadDivide"
-        | "Minus" | "Equal" | "Comma" | "Period" | "Slash" | "Semicolon" | "Quote"
-        | "BracketLeft" | "BracketRight" | "Backslash" | "Backquote" => -1,
+        "Insert" | "PageUp" | "PageDown" | "Numpad0" | "Numpad1" | "Numpad2" | "Numpad3"
+        | "Numpad4" | "Numpad5" | "Numpad6" | "Numpad7" | "Numpad8" | "Numpad9" | "NumpadAdd"
+        | "NumpadSubtract" | "NumpadMultiply" | "NumpadDivide" | "Minus" | "Equal" | "Comma"
+        | "Period" | "Slash" | "Semicolon" | "Quote" | "BracketLeft" | "BracketRight"
+        | "Backslash" | "Backquote" => -1,
         _ => {
             if let Some(letter) = key
                 .strip_prefix("Key")

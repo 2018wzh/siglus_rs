@@ -35,10 +35,33 @@ fn status(event: &abi::InputEvent) -> abi::Status {
 #[test]
 fn desktop_unmapped_keys_reach_native_wait_and_text_path() {
     for physical in [
-        "Insert", "PageUp", "PageDown", "Numpad0", "Numpad1", "Numpad2", "Numpad3",
-        "Numpad4", "Numpad5", "Numpad6", "Numpad7", "Numpad8", "Numpad9", "NumpadAdd",
-        "NumpadSubtract", "NumpadMultiply", "NumpadDivide", "Minus", "Equal", "Comma",
-        "Period", "Slash", "Semicolon", "Quote", "BracketLeft", "BracketRight", "Backslash",
+        "Insert",
+        "PageUp",
+        "PageDown",
+        "Numpad0",
+        "Numpad1",
+        "Numpad2",
+        "Numpad3",
+        "Numpad4",
+        "Numpad5",
+        "Numpad6",
+        "Numpad7",
+        "Numpad8",
+        "Numpad9",
+        "NumpadAdd",
+        "NumpadSubtract",
+        "NumpadMultiply",
+        "NumpadDivide",
+        "Minus",
+        "Equal",
+        "Comma",
+        "Period",
+        "Slash",
+        "Semicolon",
+        "Quote",
+        "BracketLeft",
+        "BracketRight",
+        "Backslash",
         "Backquote",
     ] {
         for pressed in [0, 1] {
@@ -50,7 +73,8 @@ fn desktop_unmapped_keys_reach_native_wait_and_text_path() {
                 text,
                 pressed: decoded_pressed,
                 repeat,
-            }) = (unsafe { decode(&event, 1, 1) }) else {
+            }) = (unsafe { decode(&event, 1, 1) })
+            else {
                 panic!("native key {physical} rejected");
             };
             assert_eq!(code, -1);
@@ -111,7 +135,15 @@ fn malformed_committed_text_is_rejected() {
 
 #[test]
 fn unknown_inputs_and_stale_pointer_frames_remain_errors() {
-    for physical in ["Unknown", "Unidentified", "KeyAA", "Keya", "Digit10", "F0", "F13"] {
+    for physical in [
+        "Unknown",
+        "Unidentified",
+        "KeyAA",
+        "Keya",
+        "Digit10",
+        "F0",
+        "F13",
+    ] {
         assert_eq!(status(&key(physical, "a")), abi::UNSUPPORTED);
     }
     let mut event = key("", "");
