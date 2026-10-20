@@ -14,6 +14,6 @@ default = []
 dynamic = ["astra-emu-abi/diagnostic-bridge"]
 
 [dependencies]
-astra-emu-abi = { git = "https://github.com/2018wzh/AstraEngine.git", rev = "15a39a626b1316cb6137a75e17e14a2ff2d1ba88" }
+astra-emu-abi = { git = "https://github.com/2018wzh/AstraEngine.git", rev = "6799938dc33b25bcca4d9a11ddbea1366bf7d93c" }
 siglus_scene_vm = { path = "../../crates/siglus_scene_vm", features = ["pausable-clock"] }
 pollster = "0.3"
