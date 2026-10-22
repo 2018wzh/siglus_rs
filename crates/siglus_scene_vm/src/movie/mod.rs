@@ -365,6 +365,7 @@ impl Drop for OmvStreamState {
 /// - OMV (`.omv`) via `siglus_assets::omv`
 pub struct MovieManager {
     project_dir: PathBuf,
+    resource_language: crate::resource::ResourceLanguage,
     current_append_dir: String,
     current: Option<MovieInfo>,
     cache: HashMap<PathBuf, MovieAsset>,
@@ -569,8 +570,16 @@ impl MovieManager {
     }
 
     pub fn new(project_dir: PathBuf) -> Self {
+        Self::new_with_resource_language(project_dir, crate::resource::ResourceLanguage::Original)
+    }
+
+    pub fn new_with_resource_language(
+        project_dir: PathBuf,
+        resource_language: crate::resource::ResourceLanguage,
+    ) -> Self {
         Self {
             project_dir,
+            resource_language,
             current_append_dir: String::new(),
             current: None,
             cache: HashMap::new(),
@@ -660,7 +669,7 @@ impl MovieManager {
     }
 
     pub fn play(&mut self, file_name: &str, _wait: bool, _key_skip: bool) -> Result<MovieInfo> {
-        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name)?;
+        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name, self.resource_language)?;
         let ext = path
             .extension()
             .and_then(|s| s.to_str())
@@ -720,7 +729,7 @@ impl MovieManager {
 
     /// Resolve and decode a movie asset into RGBA frames (cached).
     pub fn ensure_asset(&mut self, file_name: &str) -> Result<(&MovieAsset, bool)> {
-        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name)?;
+        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name, self.resource_language)?;
         self.ensure_asset_for_path(path)
     }
 
@@ -744,7 +753,7 @@ impl MovieManager {
     }
 
     pub fn poll_asset(&mut self, file_name: &str) -> Result<Option<(&MovieAsset, bool)>> {
-        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name)?;
+        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name, self.resource_language)?;
         self.poll_asset_for_path(path)
     }
 
@@ -851,7 +860,7 @@ impl MovieManager {
         if let Some(path) = self.path_cache.get(&key) {
             return Ok(path.clone());
         }
-        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name)?;
+        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name, self.resource_language)?;
         self.path_cache.insert(key, path.clone());
         Ok(path)
     }
@@ -1418,7 +1427,7 @@ impl MovieManager {
     }
 
     pub fn ensure_preview_frame(&mut self, file_name: &str) -> Result<Arc<RgbaImage>> {
-        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name)?;
+        let path = resolve_mov_path(&self.project_dir, &self.current_append_dir, file_name, self.resource_language)?;
         self.ensure_preview_frame_for_path(path)
     }
 
@@ -1598,9 +1607,10 @@ fn resolve_mov_path(
     project_dir: &Path,
     current_append_dir: &str,
     file_name: &str,
+    language: crate::resource::ResourceLanguage,
 ) -> Result<PathBuf> {
     let (path, _ty) =
-        crate::resource::find_mov_path_with_append_dir(project_dir, current_append_dir, file_name)?;
+        crate::resource::find_mov_path_with_append_dir(project_dir, current_append_dir, file_name, language)?;
     Ok(path)
 }
 
