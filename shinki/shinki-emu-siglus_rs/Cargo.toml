@@ -1,11 +1,12 @@
 [package]
-name = "astra-emu-siglus_rs"
+name = "shinki-emu-siglus_rs"
 version = "1.0.0"
 edition = "2024"
 license = "MPL-2.0"
+build = "build.rs"
 
 [lib]
-name = "astra_emu_siglus_rs"
+name = "shinki_emu_siglus_rs"
 crate-type = ["rlib", "cdylib"]
 doctest = false
 
@@ -13,18 +14,21 @@ doctest = false
 
 [features]
 default = []
-dynamic = ["astra-emu-abi/diagnostic-bridge"]
+dynamic = ["shinki-emu-abi/diagnostic-bridge"]
 
 [dependencies]
-astra-emu-abi = { git = "https://github.com/2018wzh/AstraEngine.git", rev = "6d9d691dcc8f3d768e40b5be1d6f37366cca62d8" }
+shinki-emu-abi = { git = "https://github.com/Project-Shinkirou/ShinkiEMU", rev = "035155c78761768bc088169a4eca982f82e9d577" }
 siglus_scene_vm = { path = "../../crates/siglus_scene_vm", features = ["pausable-clock"] }
 pollster = "0.3"
 
-[package.metadata.astra]
+[build-dependencies]
+shinki-emu-build = { git = "https://github.com/Project-Shinkirou/ShinkiEMU", rev = "035155c78761768bc088169a4eca982f82e9d577" }
+
+[package.metadata.shinki]
 upstream = "https://github.com/xmoezzz/siglus_rs"
 upstream_revision = "5f358ef1360b0439e92aed2b749e8f25d8721954"
-fork = "https://github.com/2018wzh/siglus_rs"
-fork_branch = "astra"
+fork = "https://github.com/Project-Shinkirou/siglus_rs"
+fork_branch = "shinki"
 base_revision = "13b55b47484faf8dfe03deb6ffd56ca0ec4ba3f2"
 kira_upstream_revision = "dfb08d08d065930e9b257203bf11c6d34742f542"
 kira_fork_revision = "a299b42690094a71885f6ed97dc504c4038da9a7"

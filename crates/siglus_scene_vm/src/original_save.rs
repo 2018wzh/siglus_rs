@@ -1031,7 +1031,7 @@ pub fn managed_save_base(
         crate::resource::ResourceLanguage::Chs => "chs",
     };
     let mut digest = Sha256::new();
-    digest.update(b"astra.siglus.save_identity.v1\0");
+    digest.update(b"shinki.siglus.save_identity.v1\0");
     digest.update(language_name.as_bytes());
     let mut block = [0u8; 64 * 1024];
     for path in [language.initial_scene_path(project_dir)?, language.initial_gameexe_path(project_dir)?] {

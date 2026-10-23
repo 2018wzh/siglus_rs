@@ -76,7 +76,7 @@ impl Platform {
         let call = self.service.request.ok_or_else(|| {
             Failure::new(
                 abi::UNSUPPORTED,
-                "ASTRA_EMU_SIGLUS_WINDOW_SERVICE",
+                "SHINKI_EMU_SIGLUS_WINDOW_SERVICE",
                 "native dialog requires a window host",
             )
         })?;
@@ -163,7 +163,7 @@ impl Platform {
         if status != abi::OK {
             return Err(Failure::new(
                 status,
-                "ASTRA_EMU_SIGLUS_WINDOW_SERVICE",
+                "SHINKI_EMU_SIGLUS_WINDOW_SERVICE",
                 String::from_utf8_lossy(
                     &error.message[..(error.message_len as usize).min(error.message.len())],
                 )

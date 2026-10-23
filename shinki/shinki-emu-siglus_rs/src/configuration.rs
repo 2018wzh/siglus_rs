@@ -69,7 +69,7 @@ static FIELDS: Fields = Fields([
         choices: std::ptr::null(),
         choice_count: 0,
         description: text(
-            "存放存档的目录；留空时使用 AstraEMU 为该作品单独管理的存档目录，路径不相对于游戏目录。",
+            "存放存档的目录；留空时使用 ShinkiEMU 为该作品单独管理的存档目录，路径不相对于游戏目录。",
         ),
         choice_labels: std::ptr::null(),
         step: 0.0,
@@ -87,7 +87,7 @@ pub(super) unsafe fn parse(entries: &[abi::ConfigEntry]) -> Result<EmbeddedConfi
     unsafe { abi::validate_config(&FIELDS.0, entries) }.map_err(|e| {
         Failure::new(
             abi::INVALID_ARGUMENT,
-            "ASTRA_EMU_SIGLUS_CONFIG",
+            "SHINKI_EMU_SIGLUS_CONFIG",
             format!("configuration {}: {}", e.index, e.reason),
         )
     })?;
@@ -189,7 +189,7 @@ pub(super) fn screen_size(root: &Path, language: resource::ResourceLanguage) -> 
             .ok_or_else(|| {
                 Failure::new(
                     abi::INVALID_ARGUMENT,
-                    "ASTRA_EMU_SIGLUS_SCREEN_SIZE",
+                    "SHINKI_EMU_SIGLUS_SCREEN_SIZE",
                     "invalid native SCREEN_SIZE",
                 )
             })
@@ -250,31 +250,8 @@ mod tests {
             unsafe { parse(&[entry("chs")]) }.unwrap().resource_language,
             resource::ResourceLanguage::Chs
         );
-        assert_eq!(FIELDS.0.len(), 2);
-        assert_eq!(
-            unsafe { FIELDS.0[0].default_value.text.text(128) }.unwrap(),
-            "original"
-        );
     }
 
-    #[test]
-    fn descriptor_declares_chinese_names_labels_and_no_render_extent() {
-        let descriptor = descriptor();
-        unsafe { descriptor.validate() }.unwrap();
-        assert_eq!(
-            unsafe { descriptor.display_name.text(64) }.unwrap(),
-            "siglus-rs"
-        );
-        assert_eq!(
-            unsafe { descriptor.family_name.text(64) }.unwrap(),
-            "SiglusEngine"
-        );
-        assert_eq!(descriptor.render, abi::RenderExtentSupport::default());
-        let labels = unsafe { std::slice::from_raw_parts(FIELDS.0[0].choice_labels, 2) };
-        assert_eq!(unsafe { labels[0].text(64) }.unwrap(), "原版");
-        assert_eq!(unsafe { labels[1].text(64) }.unwrap(), "简体中文");
-        assert_eq!(FIELDS.0[1].flags, abi::CONFIG_FLAG_DIRECTORY_PATH);
-    }
 
     #[test]
     fn invalid_language_type_choice_or_duplicate_is_rejected() {

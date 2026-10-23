@@ -85,7 +85,7 @@ impl Readback {
             self.cancel(renderer);
             return Err(Failure::new(
                 abi::CORE_ERROR,
-                "ASTRA_EMU_SIGLUS_READBACK_TIMEOUT",
+                "SHINKI_EMU_SIGLUS_READBACK_TIMEOUT",
                 "native frame readback exceeded five seconds",
             ));
         }

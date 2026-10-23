@@ -1,5 +1,5 @@
-//! Astra C boundary. Native VM, render, audio and save remain in siglus_scene_vm.
-use astra_emu_abi as abi;
+//! Shinki C boundary. Native VM, render, audio and save remain in siglus_scene_vm.
+use shinki_emu_abi as abi;
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::atomic::{AtomicBool, Ordering},
@@ -30,7 +30,7 @@ impl Failure {
     fn native(error: impl std::fmt::Display) -> Self {
         Self::new(
             abi::CORE_ERROR,
-            "ASTRA_EMU_SIGLUS_ENGINE",
+            "SHINKI_EMU_SIGLUS_ENGINE",
             format!("{error:#}"),
         )
     }
@@ -44,7 +44,7 @@ impl From<abi::Status> for Failure {
     fn from(status: abi::Status) -> Self {
         Self::new(
             status,
-            "ASTRA_EMU_SIGLUS_ARGUMENT",
+            "SHINKI_EMU_SIGLUS_ARGUMENT",
             "invalid or unsupported ABI request",
         )
     }
@@ -53,7 +53,7 @@ fn boundary(error: *mut abi::Error, f: impl FnOnce() -> Result<()>) -> abi::Stat
     let result = catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| {
         Err(Failure::new(
             abi::PANICKED,
-            "ASTRA_EMU_SIGLUS_PANIC",
+            "SHINKI_EMU_SIGLUS_PANIC",
             "native boundary panicked",
         ))
     });
@@ -92,7 +92,7 @@ unsafe extern "C" fn initialize(
         unsafe { abi::diagnostic_bridge::install(*d) }.map_err(|status| {
             Failure::new(
                 status,
-                "ASTRA_EMU_FAMILY_DIAGNOSTIC_INIT",
+                "SHINKI_EMU_FAMILY_DIAGNOSTIC_INIT",
                 "diagnostic bridge initialization failed",
             )
         })?;
@@ -147,7 +147,7 @@ pub unsafe extern "C" fn query(version: u32, out: *mut *const abi::CoreApi) -> a
 /// A non-null `out` must point to writable storage for one core-table pointer.
 #[cfg(feature = "dynamic")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn astra_emu_query(
+pub unsafe extern "C" fn shinki_emu_query(
     version: u32,
     out: *mut *const abi::CoreApi,
 ) -> abi::Status {

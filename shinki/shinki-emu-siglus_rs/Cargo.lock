@@ -204,25 +204,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "astra-emu-abi"
-version = "0.1.0"
-source = "git+https://github.com/2018wzh/AstraEngine.git?rev=6d9d691dcc8f3d768e40b5be1d6f37366cca62d8#6d9d691dcc8f3d768e40b5be1d6f37366cca62d8"
-dependencies = [
- "tracing",
- "tracing-log",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "astra-emu-siglus_rs"
-version = "1.0.0"
-dependencies = [
- "astra-emu-abi",
- "pollster",
- "siglus_scene_vm",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1890,6 +1871,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.37.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "oboe"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2467,6 +2457,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
+]
+
+[[package]]
+name = "shinki-emu-abi"
+version = "0.1.0"
+source = "git+https://github.com/Project-Shinkirou/ShinkiEMU?rev=035155c78761768bc088169a4eca982f82e9d577#035155c78761768bc088169a4eca982f82e9d577"
+dependencies = [
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "shinki-emu-build"
+version = "0.1.0"
+source = "git+https://github.com/Project-Shinkirou/ShinkiEMU?rev=035155c78761768bc088169a4eca982f82e9d577#035155c78761768bc088169a4eca982f82e9d577"
+dependencies = [
+ "anyhow",
+ "cc",
+ "object",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "shinki-emu-siglus_rs"
+version = "1.0.0"
+dependencies = [
+ "pollster",
+ "shinki-emu-abi",
+ "shinki-emu-build",
+ "siglus_scene_vm",
 ]
 
 [[package]]

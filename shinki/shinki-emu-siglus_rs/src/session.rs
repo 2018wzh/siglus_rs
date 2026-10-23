@@ -182,7 +182,7 @@ pub(super) unsafe extern "C" fn open(
                 .unwrap_or_else(|_| {
                     Err(Failure::new(
                         abi::PANICKED,
-                        "ASTRA_EMU_SIGLUS_PANIC",
+                        "SHINKI_EMU_SIGLUS_PANIC",
                         "native worker panicked",
                     ))
                 });
@@ -201,7 +201,7 @@ pub(super) unsafe extern "C" fn open(
                     Ok(Err(failure)) => failure,
                     _ => Failure::new(
                         abi::CORE_ERROR,
-                        "ASTRA_EMU_SIGLUS_OPEN",
+                        "SHINKI_EMU_SIGLUS_OPEN",
                         "native worker stopped before initialization",
                     ),
                 });
@@ -571,7 +571,7 @@ pub(super) unsafe extern "C" fn close(handle: abi::Session, error: *mut abi::Err
             worker.join().map_err(|_| {
                 Failure::new(
                     abi::PANICKED,
-                    "ASTRA_EMU_SIGLUS_PANIC",
+                    "SHINKI_EMU_SIGLUS_PANIC",
                     "native worker panicked during cleanup",
                 )
             })??;

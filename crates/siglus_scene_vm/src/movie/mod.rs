@@ -445,7 +445,7 @@ impl MovieManager {
         self.mpeg2_streams.clear();
         self.wmv_streams.clear();
         self.omv_streams.clear();
-        if failed { bail!("ASTRA_SIGLUS_MOVIE_WORKER_PANIC"); }
+        if failed { bail!("SHINKI_EMU_SIGLUS_MOVIE_WORKER_PANIC"); }
         Ok(())
     }
 

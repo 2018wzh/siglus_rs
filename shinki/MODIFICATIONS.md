@@ -1,11 +1,11 @@
-# Astra modifications
+# Shinki modifications
 
 ## Sources
 
 - Upstream `xmoezzz/siglus_rs` `5f358ef1360b0439e92aed2b749e8f25d8721954` (1.0.0).
-- Native baseline `13b55b47484faf8dfe03deb6ffd56ca0ec4ba3f2` on the `2018wzh/siglus_rs` fork: the native lifecycle and empty proc-stack fixes below, with the commercial hardware acceptance driver removed. The `astra` branch is this baseline plus one adaptation commit containing the adapter, native resource language selection and save isolation.
-- Kira 0.9.6 stays the complete nested submodule `vendor/kira`: upstream `dfb08d08d065930e9b257203bf11c6d34742f542`, fix `a299b42690094a71885f6ed97dc504c4038da9a7` from `2018wzh/kira`. Kira pins the CPAL 0.15.3 WASAPI teardown fix `65ac8a6ac1a635cc26bfc5af331295b052044908` from `2018wzh/cpal`.
-- `astra/astra-emu-siglus_rs` depends on `astra-emu-abi` (C ABI v3) from `2018wzh/AstraEngine@6d9d691dcc8f3d768e40b5be1d6f37366cca62d8`. License texts and notices are in `astra/THIRD_PARTY_NOTICES.md`.
+- Native baseline `13b55b47484faf8dfe03deb6ffd56ca0ec4ba3f2` originated on the `2018wzh/siglus_rs` fork: the native lifecycle and empty proc-stack fixes below, with the commercial hardware acceptance driver removed. The current fork is `Project-Shinkirou/siglus_rs`, branch `shinki`.
+- Kira 0.9.6 stays the complete nested submodule `vendor/kira`: upstream `dfb08d08d065930e9b257203bf11c6d34742f542`, fix `a299b42690094a71885f6ed97dc504c4038da9a7` originally from `2018wzh/kira`. Its existing CPAL 0.15.3 WASAPI teardown pin `65ac8a6ac1a635cc26bfc5af331295b052044908` is unchanged.
+- `shinki/shinki-emu-siglus_rs` depends on `shinki-emu-abi` (C ABI v3) and host-side `shinki-emu-build` from `Project-Shinkirou/ShinkiEMU@cb8d9dd22d7d0ab129085b324c94d6dc81fa19e3`. License texts and notices are in `shinki/THIRD_PARTY_NOTICES.md`.
 
 ## Native baseline fixes
 
@@ -16,10 +16,10 @@
 - The WMV crate is version 0.2.1 with library name `siglus_wmv_decoder` (and its three CLI references) to avoid artifact name collisions with other cores.
 - An exhausted native proc stack becomes idle instead of a permanent `paused` latch, so a `ReturnToMenu` queued by redraw still runs. Real suspension uses `set_suspended`.
 
-## AstraEMU adapter
+## ShinkiEMU adapter
 
-- `astra/astra-emu-siglus_rs` is a standalone Cargo workspace (own `Cargo.lock`) with package `astra-emu-siglus_rs` and library `astra_emu_siglus_rs` (`rlib` + `cdylib`). It holds the C ABI boundary, describe/probe, input mapping, native worker, typed platform bridge and immutable CPU leases. No adapter code remains in AstraEngine.
-- Static registration uses `query`. The `dynamic` feature exports `astra_emu_query` from `astra_emu_siglus_rs.dll`, returning the same `CoreApi`, and enables `astra-emu-abi/diagnostic-bridge` to install the shared log bridge; static builds reuse the host subscriber. `initialize` precedes describe/probe/open.
+- `shinki/shinki-emu-siglus_rs` is a standalone Cargo workspace (own `Cargo.lock`) with package `shinki-emu-siglus_rs` and library `shinki_emu_siglus_rs` (`rlib` + `cdylib`). It holds the C ABI boundary, describe/probe, input mapping, native worker, typed platform bridge and immutable CPU leases. No adapter code remains in RoukakuEngine.
+- Static registration uses `query`. The `dynamic` feature exports `shinki_emu_query` from `shinki_emu_siglus_rs.dll`, returning the same `CoreApi`, and enables `shinki-emu-abi/diagnostic-bridge` to install the shared log bridge; static builds reuse the host subscriber. `initialize` precedes describe/probe/open.
 - Extension queries for `module_owner` and unknown extensions return `UNSUPPORTED` and clear the output pointer without touching global error or session state; later queries and successful calls do not inherit the rejection.
 - The worker calls the original `SiglusHost::new_with_renderer_sync` / `step`, keeping the native proc stack, renderer, Kira, movies, input and savedata. The host passes no elapsed time and never advances the VM.
 - Output keeps the original complete offscreen frame (sprite/wipe/shader/Emote/text/system UI) and its asynchronous single-staging readback. Three Arc CPU slots apply back-pressure; leases are not copied or extended to a fourth slot, and the five-second map deadline is not renewed by polling or resize.
@@ -34,10 +34,12 @@
 ## Build
 
 ```
-cargo build --manifest-path astra/astra-emu-siglus_rs/Cargo.toml --locked --release -p astra-emu-siglus_rs --features dynamic
+cargo build --manifest-path shinki/shinki-emu-siglus_rs/Cargo.toml --locked --release -p shinki-emu-siglus_rs --features dynamic
 ```
 
-The MPEG/WMV decoders are statically linked; the DLL needs the Windows system libraries, a GPU driver and the VC runtime. Adapter tests cover key mapping, native unmapped-key dispatch, committed text limits, unknown-input rejection, stateless extension rejection, the native error cause chain, typed configuration and Dynamic/Static table identity. GPU-gated tests (`--include-ignored`) run generated public scenes: `crates/siglus_scene_vm/tests/host_exit.rs` drives `SiglusHost` through OWARI, END_GAME without warning, and an accepted or declined warning; the adapter's `session_tests.rs` opens a real ABI session, waits for `SESSION_FINISHED` after OWARI or a host-confirmed END_GAME warning, checks that the state stays finished, control is refused and global data was saved, and that close releases the core for a second session in the same process. Product acceptance is still manual in a Release host.
+From the ShinkiEMU root, use `cargo xtask build --target x86_64-pc-windows-msvc --core siglus_rs --release`. The adapter's `build.rs` writes `OUT_DIR/core-build.json` with the target, profile, ABI and fork-relative license inputs, including the unchanged nested Kira licenses. License changes trigger regeneration; xtask reads the manifest and cdylib location from Cargo messages.
+
+The MPEG/WMV decoders are statically linked; the DLL needs the Windows system libraries, a GPU driver and the VC runtime. Adapter tests cover key mapping, native unmapped-key dispatch, committed text limits, unknown-input rejection, stateless extension rejection, the native error cause chain and typed configuration. GPU-gated tests (`--include-ignored`) run generated public scenes: `crates/siglus_scene_vm/tests/host_exit.rs` drives `SiglusHost` through OWARI, END_GAME without warning, and an accepted or declined warning; the adapter's `session_tests.rs` opens a real ABI session, waits for `SESSION_FINISHED` after OWARI or a host-confirmed END_GAME warning, checks that the state stays finished, control is refused and global data was saved, and that close releases the core for a second session in the same process. Product acceptance is still manual in a Release host.
 
 ## Native resource language selection
 

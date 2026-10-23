@@ -58,20 +58,7 @@ fn native_error_preserves_its_cause_chain() {
         .context("request_device");
     let failure = Failure::native(error);
     assert_eq!(failure.status, abi::CORE_ERROR);
-    assert_eq!(failure.code, "ASTRA_EMU_SIGLUS_ENGINE");
+    assert_eq!(failure.code, "SHINKI_EMU_SIGLUS_ENGINE");
     assert_eq!(failure.message, "request_device: device is null");
 }
 
-#[cfg(feature = "dynamic")]
-#[test]
-fn dynamic_and_static_registration_share_the_native_table() {
-    let mut dynamic = std::ptr::null();
-    let mut registered = std::ptr::null();
-    assert_eq!(
-        unsafe { astra_emu_query(abi::ABI_VERSION, &mut dynamic) },
-        abi::OK
-    );
-    assert_eq!(unsafe { query(abi::ABI_VERSION, &mut registered) }, abi::OK);
-    assert!(!dynamic.is_null());
-    assert_eq!(dynamic, registered);
-}

@@ -31,20 +31,26 @@ callbacks may enqueue `ReturnToMenu` after the ending script halts; the next
 pump must consume that proc and restart the configured menu. Real suspension
 continues to use `set_suspended` and the native clock/audio boundary.
 
-## AstraEMU adapter
+## ShinkiEMU adapter
 
-`astra/astra-emu-siglus_rs` is the standalone AstraEMU C ABI v3 adapter
-(package `astra-emu-siglus_rs`, library `astra_emu_siglus_rs`), pinned to the
-`astra-emu-abi` revision in its manifest. Its `query` function serves static
+`shinki/shinki-emu-siglus_rs` is the standalone ShinkiEMU C ABI v3 adapter
+(package `shinki-emu-siglus_rs`, library `shinki_emu_siglus_rs`), pinned to the
+`shinki-emu-abi` revision in its manifest. Its `query` function serves static
 registration; the `dynamic` feature exports the same table as
-`astra_emu_query` from `astra_emu_siglus_rs.dll`:
+`shinki_emu_query` from `shinki_emu_siglus_rs.dll`:
 
 ```
-cargo build --manifest-path astra/astra-emu-siglus_rs/Cargo.toml --locked --release -p astra-emu-siglus_rs --features dynamic
+cargo build --manifest-path shinki/shinki-emu-siglus_rs/Cargo.toml --locked --release -p shinki-emu-siglus_rs --features dynamic
 ```
 
-Adaptation changes and license notices are in `astra/MODIFICATIONS.md` and
-`astra/THIRD_PARTY_NOTICES.md`.
+Adaptation changes and license notices are in `shinki/MODIFICATIONS.md` and
+`shinki/THIRD_PARTY_NOTICES.md`.
+
+The adapter has its own workspace and lockfile. Its `build.rs` writes
+`OUT_DIR/core-build.json` with the ABI, target, profile and license inputs;
+ShinkiEMU and its host-side build helper are pinned to
+`cb8d9dd22d7d0ab129085b324c94d6dc81fa19e3`. From the ShinkiEMU checkout, run
+`cargo xtask build --target x86_64-pc-windows-msvc --core siglus_rs --release`.
 
 The worker calls the existing `SiglusHost::step` entry; hosts submit input and
 control without driving VM ticks. Native Kira audio and original savedata remain
