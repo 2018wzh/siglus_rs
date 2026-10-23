@@ -31,6 +31,30 @@ callbacks may enqueue `ReturnToMenu` after the ending script halts; the next
 pump must consume that proc and restart the configured menu. Real suspension
 continues to use `set_suspended` and the native clock/audio boundary.
 
+## AstraEMU adapter
+
+`astra/astra-emu-siglus_rs` is the standalone AstraEMU C ABI v3 adapter
+(package `astra-emu-siglus_rs`, library `astra_emu_siglus_rs`), pinned to the
+`astra-emu-abi` revision in its manifest. Its `query` function serves static
+registration; the `dynamic` feature exports the same table as
+`astra_emu_query` from `astra_emu_siglus_rs.dll`:
+
+```
+cargo build --manifest-path astra/astra-emu-siglus_rs/Cargo.toml --locked --release -p astra-emu-siglus_rs --features dynamic
+```
+
+Adaptation changes and license notices are in `astra/MODIFICATIONS.md` and
+`astra/THIRD_PARTY_NOTICES.md`.
+
+The worker calls the existing `SiglusHost::step` entry; hosts submit input and
+control without driving VM ticks. Native Kira audio and original savedata remain
+core-owned.
+
+Output uses the original complete offscreen renderer and its asynchronous
+staging readback. Three immutable CPU slots bound retained output; leases can
+outlive close and be released on any thread. Raster and logical sizes are the
+game's native `SCREEN_SIZE`; unsupported overrides are rejected. Window resize
+does not resize this target. No GPU-sharing or text-Hook capability is declared.
 ## Example screenshots
 
 ### UK2 Engine

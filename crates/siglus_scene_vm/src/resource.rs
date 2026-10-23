@@ -933,6 +933,134 @@ pub(crate) struct SelectIniAppendEntry {
     pub name: String,
 }
 
+/// Explicit localization selection; original resource defaults remain unchanged.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceLanguage {
+    #[default]
+    Original,
+    Chs,
+}
+
+impl ResourceLanguage {
+    pub fn scene_path_for_append(self, project_dir: &Path, append_dir: &str) -> Result<PathBuf> {
+        match self {
+            Self::Original => find_scene_pck_path_for_append(project_dir, append_dir),
+            Self::Chs => Ok(chs_pair_paths(project_dir, append_dir)?.0),
+        }
+    }
+
+    pub fn initial_scene_path(self, project_dir: &Path) -> Result<PathBuf> {
+        let append = initial_select_ini_append(project_dir);
+        self.scene_path_for_append(project_dir, &append.dir)
+    }
+
+    pub fn initial_gameexe_path(self, project_dir: &Path) -> Result<PathBuf> {
+        match self {
+            Self::Original => find_initial_gameexe_path(project_dir),
+            Self::Chs => {
+                let append = initial_select_ini_append(project_dir);
+                Ok(chs_pair_paths(project_dir, &append.dir)?.1)
+            }
+        }
+    }
+
+    pub fn scene_decode_options(
+        self,
+        project_dir: &Path,
+    ) -> Result<siglus_assets::scene_pck::ScenePckDecodeOptions> {
+        match self {
+            Self::Original => load_scene_pck_decode_options(project_dir),
+            // Never recover against another language pair or persist into its input tree.
+            Self::Chs => siglus_assets::scene_pck::ScenePckDecodeOptions::from_project_dir(project_dir),
+        }
+    }
+}
+
+fn chs_pair_paths(project_dir: &Path, append_dir: &str) -> Result<(PathBuf, PathBuf)> {
+    let base = base_in_append(project_dir, append_dir, "");
+    let scene = resolve_windows_case_insensitive_file(&base.join("Scene.chs"))?
+        .ok_or_else(|| anyhow::anyhow!("CHS resource pair requires Scene.chs in the active append"))?;
+    let gameexe = resolve_windows_case_insensitive_file(&base.join("Gameexe.chs"))?
+        .ok_or_else(|| anyhow::anyhow!("CHS resource pair requires Gameexe.chs in the active append"))?;
+    Ok((scene, gameexe))
+}
+
+pub struct SelectedGameexe {
+    pub text: String,
+    pub config: siglus_assets::gameexe::GameexeConfig,
+    pub report: Option<siglus_assets::gameexe::GameexeDecodeReport>,
+}
+
+/// Read the selected configuration with the existing native container decoder.
+pub fn load_selected_gameexe(
+    project_dir: &Path,
+    language: ResourceLanguage,
+    read_only_inputs: bool,
+) -> Result<SelectedGameexe> {
+    let path = language.initial_gameexe_path(project_dir)?;
+    let raw = read_file_bytes(&path)?;
+    let (text, report) = if path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("ini")) {
+        (String::from_utf8(raw)?, None)
+    } else {
+        let options = match language {
+            ResourceLanguage::Original if !read_only_inputs => load_gameexe_decode_options(project_dir)?,
+            _ => {
+                siglus_assets::gameexe::GameexeDecodeOptions::from_project_dir(project_dir)?
+            }
+        };
+        let (text, report) = siglus_assets::gameexe::decode_gameexe_dat_bytes(&raw, &options)?;
+        (text, Some(report))
+    };
+    let config = siglus_assets::gameexe::GameexeConfig::from_text(&text);
+    if language == ResourceLanguage::Chs && config.entries.is_empty() {
+        bail!("selected CHS Gameexe has no configuration entries");
+    }
+    Ok(SelectedGameexe { text, config, report })
+}
+
+fn localized_image_path(path: PathBuf, language: ResourceLanguage) -> Result<PathBuf> {
+    if language == ResourceLanguage::Chs
+        && path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("g00"))
+        && let Some(localized) = resolve_windows_case_insensitive_file(&path.with_extension("g01"))?
+    {
+        return Ok(localized);
+    }
+    Ok(path)
+}
+
+fn localized_movie_path(path: PathBuf, language: ResourceLanguage) -> Result<PathBuf> {
+    if language == ResourceLanguage::Chs
+        && let Some(parent) = path.parent()
+        && parent.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case("mov"))
+        && let (Some(base), Some(name)) = (parent.parent(), path.file_name())
+        && let Some(localized) =
+            resolve_windows_case_insensitive_file(&base.join("mov_chs").join(name))?
+    {
+        return Ok(localized);
+    }
+    Ok(path)
+}
+
+/// A selected language pair must resolve the startup/menu references in its own pack.
+pub fn validate_selected_pair(
+    language: ResourceLanguage,
+    gameexe: &siglus_assets::gameexe::GameexeConfig,
+    scene: &siglus_assets::scene_pck::ScenePck,
+) -> Result<()> {
+    if language == ResourceLanguage::Original {
+        return Ok(());
+    }
+    for key in ["START_SCENE", "MENU_SCENE"] {
+        if let Some(entry) = gameexe.get_entry(key) {
+            let name = entry.item_unquoted(0).unwrap_or("").trim();
+            if name.is_empty() || scene.find_scene_no(name).is_none() {
+                bail!("selected CHS Scene/Gameexe pair has an invalid {key} reference");
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Return the append selected by the original startup path.
 ///
 /// `tnm_init_dir()` initializes `Gp_dir->append_dir/append_name` from the first
@@ -1135,13 +1263,14 @@ impl MovieType {
 ///
 /// If `name` already contains an extension, we only test that extension.
 pub fn find_bg_image(project_dir: &Path, name: &str) -> Result<(PathBuf, PctType)> {
-    find_bg_image_with_append_dir(project_dir, "", name)
+    find_bg_image_with_append_dir(project_dir, "", name, ResourceLanguage::Original)
 }
 
 pub fn find_bg_image_with_append_dir(
     project_dir: &Path,
     current_append_dir: &str,
     name: &str,
+    language: ResourceLanguage,
 ) -> Result<(PathBuf, PctType)> {
     if name.is_empty() {
         bail!("empty bg name");
@@ -1152,15 +1281,15 @@ pub fn find_bg_image_with_append_dir(
         let candidate = project_dir.join(as_path);
         if let Some(candidate) = resolve_windows_case_insensitive_file(&candidate)? {
             let pct = pct_from_path(&candidate)?;
-            return Ok((candidate, pct));
+            return Ok((localized_image_path(candidate, language)?, pct));
         }
     }
 
     for append_dir in ordered_append_dirs(project_dir, current_append_dir) {
-        if let Ok(found) = find_in_subdir(project_dir, &append_dir, "g00", name) {
+        if let Ok(found) = find_in_subdir(project_dir, &append_dir, "g00", name, language) {
             return Ok(found);
         }
-        if let Ok(found) = find_in_subdir(project_dir, &append_dir, "bg", name) {
+        if let Ok(found) = find_in_subdir(project_dir, &append_dir, "bg", name, language) {
             return Ok(found);
         }
     }
@@ -1173,13 +1302,14 @@ pub fn find_bg_image_with_append_dir(
 /// Original Siglus logic searches append directories from the current append
 /// entry to the end of `Select.ini`.
 pub fn find_g00_image(project_dir: &Path, name: &str) -> Result<(PathBuf, PctType)> {
-    find_g00_image_with_append_dir(project_dir, "", name)
+    find_g00_image_with_append_dir(project_dir, "", name, ResourceLanguage::Original)
 }
 
 pub fn find_g00_image_with_append_dir(
     project_dir: &Path,
     current_append_dir: &str,
     name: &str,
+    language: ResourceLanguage,
 ) -> Result<(PathBuf, PctType)> {
     if name.is_empty() {
         bail!("empty image name");
@@ -1190,12 +1320,12 @@ pub fn find_g00_image_with_append_dir(
         let candidate = project_dir.join(as_path);
         if let Some(candidate) = resolve_windows_case_insensitive_file(&candidate)? {
             let pct = pct_from_path(&candidate)?;
-            return Ok((candidate, pct));
+            return Ok((localized_image_path(candidate, language)?, pct));
         }
     }
 
     for append_dir in ordered_append_dirs(project_dir, current_append_dir) {
-        if let Ok(found) = find_in_subdir(project_dir, &append_dir, "g00", name) {
+        if let Ok(found) = find_in_subdir(project_dir, &append_dir, "g00", name, language) {
             return Ok(found);
         }
     }
@@ -1204,7 +1334,7 @@ pub fn find_g00_image_with_append_dir(
 }
 
 pub fn find_mov_path(project_dir: &Path, file_name: &str) -> Result<(PathBuf, MovieType)> {
-    find_mov_path_with_append_dir(project_dir, "", file_name)
+    find_mov_path_with_append_dir(project_dir, "", file_name, ResourceLanguage::Original)
 }
 
 pub fn find_omv_path_with_append_dir(
@@ -1257,6 +1387,7 @@ pub fn find_mov_path_with_append_dir(
     project_dir: &Path,
     current_append_dir: &str,
     file_name: &str,
+    language: ResourceLanguage,
 ) -> Result<(PathBuf, MovieType)> {
     if file_name.is_empty() {
         bail!("empty movie name");
@@ -1266,7 +1397,7 @@ pub fn find_mov_path_with_append_dir(
     if p.is_absolute() {
         if let Some(path) = resolve_windows_case_insensitive_file(p)? {
             let ty = movie_type_from_path(&path)?;
-            return Ok((path, ty));
+            return Ok((localized_movie_path(path, language)?, ty));
         }
         bail!("movie not found: {file_name}");
     }
@@ -1275,7 +1406,7 @@ pub fn find_mov_path_with_append_dir(
         let candidate = project_dir.join(p);
         if let Some(candidate) = resolve_windows_case_insensitive_file(&candidate)? {
             let ty = movie_type_from_path(&candidate)?;
-            return Ok((candidate, ty));
+            return Ok((localized_movie_path(candidate, language)?, ty));
         }
     }
 
@@ -1286,7 +1417,7 @@ pub fn find_mov_path_with_append_dir(
             let ty = movie_type_from_ext(ext)?;
             let p = base.join(format!("{stem}.{ext}"));
             if let Some(path) = resolve_windows_case_insensitive_file(&p)? {
-                return Ok((path, ty));
+                return Ok((localized_movie_path(path, language)?, ty));
             }
             continue;
         }
@@ -1295,7 +1426,7 @@ pub fn find_mov_path_with_append_dir(
             let p = base.join(format!("{stem}.{ext}"));
             if let Some(path) = resolve_windows_case_insensitive_file(&p)? {
                 let ty = MovieType::from_id(ty_id).expect("valid movie type");
-                return Ok((path, ty));
+                return Ok((localized_movie_path(path, language)?, ty));
             }
         }
     }
@@ -1563,15 +1694,22 @@ fn find_in_subdir(
     append_dir: &str,
     subdir: &str,
     name: &str,
+    language: ResourceLanguage,
 ) -> Result<(PathBuf, PctType)> {
     let base = base_in_append(project_dir, append_dir, subdir);
 
     let (stem, explicit_ext) = split_name_ext(name);
+    if language == ResourceLanguage::Chs
+        && explicit_ext.is_none_or(|ext| ext.eq_ignore_ascii_case("g00"))
+        && let Some(path) = resolve_windows_case_insensitive_file(&base.join(format!("{stem}.g01")))?
+    {
+        return Ok((path, PctType::G00));
+    }
     if let Some(ext) = explicit_ext {
         let pct = pct_from_ext(ext)?;
         let p = base.join(format!("{stem}.{ext}"));
         if let Some(path) = resolve_windows_case_insensitive_file(&p)? {
-            return Ok((path, pct));
+            return Ok((localized_image_path(path, language)?, pct));
         }
         bail!("not found");
     }
@@ -1579,7 +1717,7 @@ fn find_in_subdir(
     for pct in ORDER {
         let p = base.join(format!("{stem}.{}", pct.ext()));
         if let Some(path) = resolve_windows_case_insensitive_file(&p)? {
-            return Ok((path, pct));
+            return Ok((localized_image_path(path, language)?, pct));
         }
     }
 
@@ -1607,7 +1745,7 @@ fn pct_from_path(p: &Path) -> Result<PctType> {
 
 fn pct_from_ext(ext: &str) -> Result<PctType> {
     match ext.to_ascii_lowercase().as_str() {
-        "g00" => Ok(PctType::G00),
+        "g00" | "g01" => Ok(PctType::G00),
         "bmp" => Ok(PctType::Bmp),
         "png" => Ok(PctType::Png),
         "jpg" | "jpeg" => Ok(PctType::Jpg),

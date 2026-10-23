@@ -438,7 +438,12 @@ impl DesktopMessageBoxWindow {
             );
         }
 
-        let frame = match self.renderer.surface.get_current_texture() {
+        let surface = self
+            .renderer
+            .surface
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("renderer has no window surface"))?;
+        let frame = match surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.renderer

@@ -250,6 +250,7 @@ pub(crate) fn g00_composite_component_names(raw: &str) -> Option<Vec<String>> {
 #[derive(Debug)]
 pub struct ImageManager {
     project_dir: PathBuf,
+    resource_language: crate::resource::ResourceLanguage,
     current_append_dir: String,
     key_to_id: HashMap<ImageSourceKey, WeakImageHandle>,
     /// Original Tona3 keeps one C_d3d_album per resolved G00 resource.  Keep
@@ -409,8 +410,16 @@ impl ImageManager {
     }
 
     pub fn new(project_dir: PathBuf) -> Self {
+        Self::new_with_resource_language(project_dir, crate::resource::ResourceLanguage::Original)
+    }
+
+    pub fn new_with_resource_language(
+        project_dir: PathBuf,
+        resource_language: crate::resource::ResourceLanguage,
+    ) -> Self {
         Self {
             project_dir,
+            resource_language,
             current_append_dir: String::new(),
             key_to_id: HashMap::new(),
             g00_album_to_ids: HashMap::new(),
@@ -563,6 +572,7 @@ impl ImageManager {
             &self.project_dir,
             &self.current_append_dir,
             name,
+            self.resource_language,
         )
         .with_context(|| format!("find bg resource {name}"))?;
         self.load_file(&path, 0)
@@ -574,6 +584,7 @@ impl ImageManager {
             &self.project_dir,
             &self.current_append_dir,
             name,
+            self.resource_language,
         )
         .with_context(|| format!("find bg resource {name}"))?;
         self.load_file(&path, frame_index)
@@ -621,6 +632,7 @@ impl ImageManager {
             &self.project_dir,
             &self.current_append_dir,
             name,
+            self.resource_language,
         )
         .with_context(|| format!("find g00 resource {name}"))?;
         let id = self.load_file(&path, frame_index as usize)?;
@@ -634,6 +646,7 @@ impl ImageManager {
             &self.project_dir,
             &self.current_append_dir,
             &part.file_name,
+            self.resource_language,
         )
         .with_context(|| format!("find composed g00 resource {}", part.file_name))?;
         if ty != crate::resource::PctType::G00 {
@@ -802,7 +815,7 @@ impl ImageManager {
             .and_then(|value| value.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if ext == "g00" {
+        if ext == "g00" || ext == "g01" {
             // C_tnm_d3d_resource_manager::create_album_from_g00() loads and
             // caches the complete album once. GAN then only changes PATNO.
             // Do the same here: the first requested cut decodes the G00 once
